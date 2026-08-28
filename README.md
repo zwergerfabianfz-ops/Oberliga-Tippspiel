@@ -26,9 +26,10 @@ Ohne `.env` startet die App bewusst im Demo-Modus. Das aktuelle Container-Image 
 
 Die App kann ohne Store als installierbare Web-App betrieben werden:
 
-1. Auf dem Hosting die Variablen `EXPO_PUBLIC_SUPABASE_URL` und `EXPO_PUBLIC_SUPABASE_ANON_KEY` setzen.
-2. Build-Befehl `npm run build:web` verwenden.
-3. Das erzeugte Verzeichnis `dist` veröffentlichen.
+1. Build-Befehl `npm run build:web` verwenden.
+2. Das erzeugte Verzeichnis `dist` veröffentlichen.
+
+Das aktuelle Supabase-Projekt und sein öffentlicher Publishable Key sind als Standardkonfiguration hinterlegt. Hosting-Variablen sind daher nicht erforderlich; sie können die Standardwerte bei einem späteren Projektwechsel überschreiben.
 
 Bei Cloudflare Pages oder Netlify kann dafür ein kostenloses Projekt mit Build-Befehl `npm run build:web` und Ausgabeverzeichnis `dist` angelegt werden. Die bereitgestellte HTTPS-Adresse wird anschließend an die Mitspieler geschickt. Android/Chrome zeigt „App installieren“ an; auf iPhone/iPad wird in Safari „Teilen → Zum Home-Bildschirm“ verwendet.
 

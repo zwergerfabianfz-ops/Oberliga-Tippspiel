@@ -2,14 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import 'react-native-url-polyfill/auto';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+// Publishable keys are intentionally safe to include in browser/mobile clients.
+// Supabase Row Level Security remains the actual protection for user data.
+const defaultUrl = 'https://btrulgwueawocwwsqwqv.supabase.co';
+const defaultPublishableKey = 'sb_publishable_2AVrbVALYo2h6r3JMycWnA_tA5LEDg9';
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL ?? defaultUrl;
+const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? defaultPublishableKey;
 
-export const isBackendConfigured = Boolean(url && anonKey);
+export const isBackendConfigured = true;
 
 export const supabase = createClient(
-  url ?? 'https://placeholder.invalid',
-  anonKey ?? 'placeholder',
+  url,
+  anonKey,
   {
     auth: {
       storage: AsyncStorage,
