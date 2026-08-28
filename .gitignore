@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+.env
+.devcontainer/
+.ona/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+coverage/

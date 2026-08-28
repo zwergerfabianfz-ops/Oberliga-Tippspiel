@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Oberliga Tippspiel",
+    "slug": "oberliga-tippspiel",
+    "version": "0.1.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "de.oberliga.tippspiel"
+    },
+    "android": {
+      "package": "de.oberliga.tippspiel",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#071426"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./public/icons/icon-192.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
+  }
+}
