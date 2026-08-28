@@ -1,18 +1,20 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 type HockeyDataRow = {
-  gameId: number | string;
-  scheduledDate: { value: string } | string;
-  scheduledTime?: string;
+  id: string;
+  gameUtcTimestamp: number;
   homeTeamId: number | string;
   homeTeamLongName: string;
   homeTeamShortName: string;
+  homeTeamLogoUrl?: string | null;
   awayTeamId: number | string;
   awayTeamLongName: string;
   awayTeamShortName: string;
+  awayTeamLogoUrl?: string | null;
   homeTeamScore?: number | null;
   awayTeamScore?: number | null;
   gameStatus?: number;
+  gameHasEnded?: boolean;
 };
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
@@ -25,11 +27,13 @@ Deno.serve(async req => {
   const { data: season, error: seasonError } = await supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1).single();
   if (seasonError) return json({ error: seasonError.message }, 500);
 
-  const apiKey = Deno.env.get('HOCKEYDATA_API_KEY');
-  if (!apiKey) return json({ error: 'HOCKEYDATA_API_KEY fehlt. Zugang beim Datenanbieter/DEB klären.' }, 503);
+  const apiKey = Deno.env.get('HOCKEYDATA_API_KEY') ?? await discoverPublicApiKey();
+  if (!apiKey) return json({ error: 'Kein HockeyData-Key auf der DEB-Seite gefunden.' }, 503);
   const options = JSON.stringify({ semantic: true, noScorers: true });
   const endpoint = new URL('https://api.hockeydata.net/data/ebel/Schedule');
   endpoint.searchParams.set('apiKey', apiKey);
+  endpoint.searchParams.set('referer', 'deb-online.live');
+  endpoint.searchParams.set('lang', 'de');
   endpoint.searchParams.set('divisionId', season.external_division_id);
   endpoint.searchParams.set('widgetOptions', options);
   const response = await fetch(endpoint);
@@ -37,10 +41,11 @@ Deno.serve(async req => {
   if (!response.ok || payload.statusId <= 0) return json({ error: payload.statusMsg ?? 'DEB/HockeyData-Abruf fehlgeschlagen' }, 502);
 
   const rows: HockeyDataRow[] = payload.data?.rows ?? [];
-  const externalTeams = new Map<string, { external_id: string; name: string; short_name: string }>();
+  if (rows.length < 100) return json({ error: `Unvollständiger DEB-Spielplan (${rows.length} Spiele). Import abgebrochen.` }, 502);
+  const externalTeams = new Map<string, { external_id: string; name: string; short_name: string; logo_url: string | null }>();
   for (const row of rows) {
-    externalTeams.set(String(row.homeTeamId), { external_id: String(row.homeTeamId), name: row.homeTeamLongName, short_name: row.homeTeamShortName });
-    externalTeams.set(String(row.awayTeamId), { external_id: String(row.awayTeamId), name: row.awayTeamLongName, short_name: row.awayTeamShortName });
+    externalTeams.set(String(row.homeTeamId), { external_id: String(row.homeTeamId), name: row.homeTeamLongName, short_name: row.homeTeamShortName, logo_url: logoUrl(season.external_division_id, row.homeTeamId) });
+    externalTeams.set(String(row.awayTeamId), { external_id: String(row.awayTeamId), name: row.awayTeamLongName, short_name: row.awayTeamShortName, logo_url: logoUrl(season.external_division_id, row.awayTeamId) });
   }
   const teams = [...externalTeams.values()].map(team => ({ ...team, season_id: season.id }));
   const { error: teamError } = await supabase.from('teams').upsert(teams, { onConflict: 'season_id,external_id' });
@@ -48,27 +53,32 @@ Deno.serve(async req => {
   const { data: storedTeams } = await supabase.from('teams').select('id,external_id').eq('season_id', season.id);
   const teamIds = new Map(storedTeams?.map(t => [t.external_id, t.id]));
 
-  const games = rows.map(row => ({
+  const games = rows.map(row => {
+    const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
+    return {
     season_id: season.id,
-    external_id: String(row.gameId),
-    phase: season.playoffs_start_at && new Date(toIso(row.scheduledDate, row.scheduledTime)) >= new Date(season.playoffs_start_at) ? 'playoffs' : 'regular',
-    starts_at: toIso(row.scheduledDate, row.scheduledTime),
+    external_id: row.id,
+    phase: 'regular',
+    starts_at: new Date(row.gameUtcTimestamp).toISOString(),
     home_team_id: teamIds.get(String(row.homeTeamId)),
     away_team_id: teamIds.get(String(row.awayTeamId)),
-    home_score: row.homeTeamScore ?? null,
-    away_score: row.awayTeamScore ?? null,
-    is_final: [3, 4].includes(row.gameStatus ?? 0),
+    home_score: isFinal ? row.homeTeamScore ?? null : null,
+    away_score: isFinal ? row.awayTeamScore ?? null : null,
+    is_final: isFinal,
     updated_at: new Date().toISOString(),
-  }));
+  }});
   const { error: gameError } = await supabase.from('games').upsert(games, { onConflict: 'season_id,external_id' });
   if (gameError) return json({ error: gameError.message }, 500);
   return json({ importedGames: games.length, importedTeams: teams.length });
 });
 
-function toIso(date: HockeyDataRow['scheduledDate'], time = '00:00') {
-  const raw = typeof date === 'string' ? date : date.value;
-  if (raw.includes('T')) return new Date(raw).toISOString();
-  const [day, month, year] = raw.split('.');
-  return new Date(`${year}-${month}-${day}T${time}:00+02:00`).toISOString();
+async function discoverPublicApiKey() {
+  const response = await fetch('https://deb-online.live/liga/herren/oberliga-sued/');
+  if (!response.ok) return null;
+  const html = await response.text();
+  return html.match(/&quot;apiKey&quot;:&quot;([^&]+)&quot;/)?.[1]
+    ?? html.match(/"apiKey":"([^"]+)"/)?.[1]
+    ?? null;
 }
+function logoUrl(divisionId: string, teamId: string | number) { return `https://api.hockeydata.net/img/icehockey/ebel/team-logos/${divisionId}/${teamId}.png`; }
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: cors }); }

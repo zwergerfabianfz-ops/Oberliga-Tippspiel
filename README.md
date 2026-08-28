@@ -62,7 +62,9 @@ Die offizielle Seite bindet Spielplan, Ergebnisse und Tabelle über HockeyData e
 - `SYNC_SECRET`: Geheimnis für Cron-/Admin-Aufrufe
 - die automatisch verfügbaren Supabase-Variablen
 
-Der auf der öffentlich erreichbaren Seite am 28.08.2026 eingebettete Schlüssel wurde vom HockeyData-Endpunkt als ungültig beantwortet. Vor dem Livebetrieb muss deshalb ein erlaubter Datenzugang mit DEB/HockeyData geklärt werden. Die App legt den Schlüssel niemals im Client ab.
+Der Importer liest den jeweils öffentlich eingebetteten Widget-Key serverseitig von der DEB-Seite und übermittelt den von HockeyData erwarteten Referer. Für die Saison 2026/27 liefert Division `21614` derzeit 14 Teams und 364 Hauptrundenspiele. Der Key wird nicht in den Mobil- oder PWA-Client eingebaut. Vor dauerhaftem automatischem Abruf sollte die Erlaubnis zur Weiterverwendung mit DEB/HockeyData geklärt werden.
+
+Für die Erstbefüllung kann der geprüfte SQL-Seed `supabase/migrations/202608280002_seed_oberliga_sued_2026.sql` einmal im Supabase SQL Editor ausgeführt werden. Ein neuer Stand lässt sich mit `npm run generate:deb-seed` erzeugen.
 
 ## Tabellenwertung
 

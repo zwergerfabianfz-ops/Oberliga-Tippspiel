@@ -20,19 +20,6 @@ import type { Game, LeaderboardEntry, Season, Team } from './src/types';
 
 type Tab = 'spiele' | 'tabelle' | 'rangliste' | 'profil';
 
-const demoTeamData: Array<[string, string, string]> = [
-  ['deg', 'Deggendorfer SC', 'DSC'], ['heil', 'Heilbronner Falken', 'HEI'],
-  ['mem', 'ECDC Memmingen', 'MEM'], ['toelz', 'Tölzer Löwen', 'TÖL'],
-  ['haching', 'Höchstadt Alligators', 'HEC'], ['riesser', 'SC Riessersee', 'SCR'],
-];
-const demoTeams: Team[] = demoTeamData.map(([id, name, shortName]) => ({ id, name, shortName }));
-
-const demoGames: Game[] = [
-  { id: 'g1', phase: 'regular', startsAt: '2026-09-20T16:00:00.000Z', homeTeam: demoTeams[0]!, awayTeam: demoTeams[1]!, homeScore: null, awayScore: null, predictedHome: null, predictedAway: null, points: null },
-  { id: 'g2', phase: 'regular', startsAt: '2026-09-20T16:30:00.000Z', homeTeam: demoTeams[2]!, awayTeam: demoTeams[3]!, homeScore: null, awayScore: null, predictedHome: 4, predictedAway: 2, points: null },
-  { id: 'g3', phase: 'playoffs', startsAt: '2026-09-22T18:00:00.000Z', homeTeam: demoTeams[4]!, awayTeam: demoTeams[5]!, homeScore: null, awayScore: null, predictedHome: null, predictedAway: null, points: null },
-];
-
 const demoSeason: Season = { id: 'demo', name: 'Oberliga Süd 2026/27', tablePredictionDeadline: '2026-09-17T21:59:59.000Z', status: 'upcoming' };
 
 export default function App() {
@@ -86,10 +73,10 @@ function AuthScreen() {
 
 function MainApp({ session }: { session: Session | null }) {
   const [tab, setTab] = useState<Tab>('spiele');
-  const [games, setGames] = useState<Game[]>(demoGames);
+  const [games, setGames] = useState<Game[]>([]);
   const [season, setSeason] = useState<Season>(demoSeason);
-  const [teams, setTeams] = useState<Team[]>(demoTeams);
-  const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([{ rank: 1, displayName: 'Eisfuchs', points: 42, exactTips: 8 }, { rank: 2, displayName: 'Powerplay', points: 38, exactTips: 7 }]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([]);
   const [tableRanking, setTableRanking] = useState<LeaderboardEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
