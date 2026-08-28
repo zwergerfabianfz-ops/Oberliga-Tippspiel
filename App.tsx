@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -127,19 +127,20 @@ function MainApp({ session }: { session: Session | null }) {
   </SafeAreaView>;
 }
 
-function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: (g: Game[]) => void; session: Session | null }) {
+function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Dispatch<SetStateAction<Game[]>>; session: Session | null }) {
   const [phase, setPhase] = useState<'regular' | 'playoffs'>('regular');
   const shown = games.filter(g => g.phase === phase);
-  async function save(game: Game, home: string, away: string) {
+  const save = useCallback(async (game: Game, home: string, away: string): Promise<boolean> => {
     const h = Number(home), a = Number(away);
-    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) { Alert.alert('Ungültiger Tipp', 'Bitte gib Tore zwischen 0 und 30 ein.'); return; }
-    if (!isTipOpen(game.startsAt)) { Alert.alert('Tipp geschlossen', 'Das Spiel hat bereits begonnen.'); return; }
+    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return false;
+    if (!isTipOpen(game.startsAt)) { Alert.alert('Tipp geschlossen', 'Das Spiel hat bereits begonnen.'); return false; }
     if (session) {
       const { error } = await supabase.rpc('save_game_prediction', { p_game_id: game.id, p_home: h, p_away: a });
-      if (error) { Alert.alert('Nicht gespeichert', error.message); return; }
+      if (error) { Alert.alert('Nicht gespeichert', error.message); return false; }
     }
-    setGames(games.map(item => item.id === game.id ? { ...item, predictedHome: h, predictedAway: a } : item));
-  }
+    setGames(current => current.map(item => item.id === game.id ? { ...item, predictedHome: h, predictedAway: a } : item));
+    return true;
+  }, [session, setGames]);
   return <>
     <Segment options={[['regular', 'Hauptrunde'], ['playoffs', 'Playoffs']]} value={phase} onChange={setPhase} />
     <Text style={styles.sectionHint}>Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
@@ -148,16 +149,39 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: (g
   </>;
 }
 
-function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => void }) {
+function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => Promise<boolean> }) {
   const [home, setHome] = useState(game.predictedHome?.toString() ?? '');
   const [away, setAway] = useState(game.predictedAway?.toString() ?? '');
+  const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(game.predictedHome === null ? 'idle' : 'saved');
+  const lastSaved = useRef(game.predictedHome === null || game.predictedAway === null ? '' : `${game.predictedHome}:${game.predictedAway}`);
   const open = isTipOpen(game.startsAt);
+  useEffect(() => {
+    if (!open || !/^\d{1,2}$/.test(home) || !/^\d{1,2}$/.test(away) || Number(home) > 30 || Number(away) > 30) {
+      setSaveState('idle');
+      return;
+    }
+    const value = `${Number(home)}:${Number(away)}`;
+    if (value === lastSaved.current) { setSaveState('saved'); return; }
+    setSaveState('pending');
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSaveState('saving');
+      const previousValue = lastSaved.current;
+      lastSaved.current = value;
+      const saved = await onSave(game, home, away);
+      if (!saved) lastSaved.current = previousValue;
+      if (cancelled) return;
+      if (saved) setSaveState('saved');
+      else setSaveState('error');
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [away, game, home, onSave, open]);
   const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
   return <View style={styles.card}>
     <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, !open && styles.closed]}>{open ? 'OFFEN' : 'GESCHLOSSEN'}</Text></View>
     <View style={styles.matchRow}><TeamBlock team={game.homeTeam} /><View style={styles.scoreInputs}><ScoreInput value={home} onChange={setHome} disabled={!open} /><Text style={styles.colon}>:</Text><ScoreInput value={away} onChange={setAway} disabled={!open} /></View><TeamBlock team={game.awayTeam} /></View>
     {game.homeScore !== null && <Text style={styles.result}>Endstand {game.homeScore}:{game.awayScore} · {game.points ?? 0} Punkte</Text>}
-    {open && <Button small label={game.predictedHome === null ? 'Tipp speichern' : 'Tipp ändern'} onPress={() => onSave(game, home, away)} />}
+    {open && saveState !== 'idle' && <Text style={[styles.saveStatus, saveState === 'error' && styles.saveError]}>{saveState === 'saved' ? '✓ Gespeichert' : saveState === 'error' ? 'Nicht gespeichert' : saveState === 'saving' ? 'Speichert …' : 'Wird gespeichert …'}</Text>}
   </View>;
 }
 
@@ -211,7 +235,7 @@ function TeamLogo({ team, large = false }: { team: Team; large?: boolean }) {
   if (!team.logoUrl || failed) return <View style={[styles.badge, frameStyle]}><Text style={styles.badgeText}>{team.shortName.slice(0, 3)}</Text></View>;
   return <View style={[styles.logoFrame, frameStyle]}><Image source={{ uri: team.logoUrl }} resizeMode="contain" style={styles.logoImage} onError={() => setFailed(true)} accessibilityLabel={`Logo ${team.name}`} /></View>;
 }
-function Button({ label, onPress, disabled, small }: { label: string; onPress: () => void; disabled?: boolean; small?: boolean }) { return <Pressable disabled={disabled} onPress={onPress} style={[styles.button, small && styles.buttonSmall, disabled && { opacity: .5 }]}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
+function Button({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) { return <Pressable disabled={disabled} onPress={onPress} style={[styles.button, disabled && { opacity: .5 }]}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 function Segment<T extends string>({ options, value, onChange }: { options: [T, string][]; value: T; onChange: (v: T) => void }) { return <View style={styles.segment}>{options.map(([key, label]) => <Pressable key={key} onPress={() => onChange(key)} style={[styles.segmentItem, key === value && styles.segmentActive]}><Text style={[styles.segmentText, key === value && styles.segmentTextActive]}>{label}</Text></Pressable>)}</View>; }
 function Empty({ text }: { text: string }) { return <View style={styles.empty}><Text style={styles.muted}>{text}</Text></View>; }
 function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndicator style={{ flex: 1 }} color="#b8f341" /></SafeAreaView>; }
@@ -222,5 +246,5 @@ function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: ro
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: c.bg }, content: { flex: 1 }, contentInner: { padding: 18, paddingBottom: 34 }, header: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, kicker: { color: c.lime, fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }, title: { color: c.ink, fontSize: 28, fontWeight: '900', marginTop: 3 }, puck: { width: 42, height: 42, borderRadius: 21, backgroundColor: c.panel2, justifyContent: 'center', alignItems: 'center' }, demoBanner: { backgroundColor: c.lime, paddingVertical: 7, alignItems: 'center' }, demoText: { color: c.bg, fontWeight: '900', fontSize: 11, letterSpacing: 1 }, nav: { borderTopWidth: 1, borderTopColor: c.line, backgroundColor: '#09182a', flexDirection: 'row', paddingTop: 8, paddingBottom: 10 }, navItem: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { color: c.muted, fontSize: 19 }, navLabel: { color: c.muted, fontSize: 10, fontWeight: '700' }, active: { color: c.lime }, segment: { padding: 4, borderRadius: 12, backgroundColor: c.panel, flexDirection: 'row', marginBottom: 14 }, segmentItem: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' }, segmentActive: { backgroundColor: c.lime }, segmentText: { color: c.muted, fontWeight: '800' }, segmentTextActive: { color: c.bg }, sectionHint: { color: c.muted, fontSize: 13, lineHeight: 19, marginBottom: 15 }, card: { borderRadius: 16, backgroundColor: c.panel, borderWidth: 1, borderColor: c.line, padding: 16, marginBottom: 13 }, cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 18 }, date: { color: c.muted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }, state: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1 }, closed: { color: c.red }, matchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, teamBlock: { width: '28%', alignItems: 'center' }, teamBlockName: { color: c.ink, textAlign: 'center', fontSize: 12, fontWeight: '700', marginTop: 8 }, logoFrame: { backgroundColor: '#f4f8fc', borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }, logo: { width: 42, height: 42, borderRadius: 12 }, logoLarge: { width: 58, height: 58, borderRadius: 14 }, logoImage: { width: '86%', height: '86%' }, badge: { minWidth: 42, height: 42, borderRadius: 12, backgroundColor: c.panel2, borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 }, badgeText: { color: c.ink, fontWeight: '900', fontSize: 11 }, scoreInputs: { flexDirection: 'row', alignItems: 'center' }, score: { width: 48, height: 52, borderRadius: 10, backgroundColor: '#07182b', color: c.ink, fontSize: 24, fontWeight: '900', textAlign: 'center', borderWidth: 1, borderColor: '#315274' }, scoreDisabled: { color: c.muted }, colon: { color: c.muted, fontSize: 24, paddingHorizontal: 7 }, result: { color: c.lime, textAlign: 'center', marginTop: 14, fontWeight: '700' }, button: { backgroundColor: c.lime, borderRadius: 11, paddingVertical: 14, alignItems: 'center', marginTop: 16 }, buttonSmall: { paddingVertical: 10 }, buttonText: { color: c.bg, fontWeight: '900' }, deadline: { backgroundColor: c.panel2, borderLeftWidth: 4, borderLeftColor: c.lime, borderRadius: 10, padding: 14, marginBottom: 13 }, deadlineLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.4 }, deadlineValue: { color: c.ink, fontSize: 17, fontWeight: '800', marginTop: 3 }, teamRank: { flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: c.line, paddingVertical: 10 }, rankNo: { width: 25, color: c.muted, fontWeight: '900', textAlign: 'center' }, teamName: { color: c.ink, flex: 1, fontWeight: '700' }, arrows: { flexDirection: 'row', gap: 10 }, arrow: { color: c.lime, fontSize: 23, padding: 4 }, rankingRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.panel, borderRadius: 12, padding: 14, marginBottom: 8 }, rankingName: { flex: 1, color: c.ink, fontWeight: '800' }, exacts: { color: c.muted, fontSize: 12, marginRight: 12 }, points: { color: c.lime, fontSize: 17, fontWeight: '900' }, empty: { padding: 40, alignItems: 'center' }, authWrap: { flex: 1, padding: 24, justifyContent: 'center' }, brand: { color: c.lime, fontSize: 13, fontWeight: '900', letterSpacing: 3 }, authTitle: { color: c.ink, fontSize: 34, fontWeight: '900', marginTop: 8, marginBottom: 8 }, muted: { color: c.muted, lineHeight: 20 }, fieldWrap: { marginTop: 18 }, label: { color: c.muted, fontSize: 12, fontWeight: '800', marginBottom: 7 }, field: { backgroundColor: c.panel, color: c.ink, borderRadius: 11, borderWidth: 1, borderColor: c.line, padding: 14, fontSize: 16 }, link: { color: c.lime, textAlign: 'center', padding: 18, fontWeight: '700' }, legalLinks: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 6 }, legalLink: { color: c.lime, fontWeight: '700', paddingVertical: 8 }, cardTitle: { color: c.ink, fontSize: 20, fontWeight: '900', marginBottom: 5 }, spacer: { height: 15 }, danger: { color: c.red, textAlign: 'center', marginTop: 20, fontWeight: '800' }, legalHeading: { color: c.ink, fontWeight: '900', marginTop: 16, marginBottom: 5 }, legalText: { color: c.muted, lineHeight: 21, marginTop: 6 }
+  safe: { flex: 1, backgroundColor: c.bg }, content: { flex: 1 }, contentInner: { padding: 18, paddingBottom: 34 }, header: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, kicker: { color: c.lime, fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }, title: { color: c.ink, fontSize: 28, fontWeight: '900', marginTop: 3 }, puck: { width: 42, height: 42, borderRadius: 21, backgroundColor: c.panel2, justifyContent: 'center', alignItems: 'center' }, demoBanner: { backgroundColor: c.lime, paddingVertical: 7, alignItems: 'center' }, demoText: { color: c.bg, fontWeight: '900', fontSize: 11, letterSpacing: 1 }, nav: { borderTopWidth: 1, borderTopColor: c.line, backgroundColor: '#09182a', flexDirection: 'row', paddingTop: 8, paddingBottom: 10 }, navItem: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { color: c.muted, fontSize: 19 }, navLabel: { color: c.muted, fontSize: 10, fontWeight: '700' }, active: { color: c.lime }, segment: { padding: 4, borderRadius: 12, backgroundColor: c.panel, flexDirection: 'row', marginBottom: 14 }, segmentItem: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' }, segmentActive: { backgroundColor: c.lime }, segmentText: { color: c.muted, fontWeight: '800' }, segmentTextActive: { color: c.bg }, sectionHint: { color: c.muted, fontSize: 13, lineHeight: 19, marginBottom: 15 }, card: { borderRadius: 16, backgroundColor: c.panel, borderWidth: 1, borderColor: c.line, padding: 16, marginBottom: 13 }, cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 18 }, date: { color: c.muted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }, state: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1 }, closed: { color: c.red }, matchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, teamBlock: { width: '28%', alignItems: 'center' }, teamBlockName: { color: c.ink, textAlign: 'center', fontSize: 12, fontWeight: '700', marginTop: 8 }, logoFrame: { backgroundColor: '#f4f8fc', borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }, logo: { width: 42, height: 42, borderRadius: 12 }, logoLarge: { width: 58, height: 58, borderRadius: 14 }, logoImage: { width: '86%', height: '86%' }, badge: { minWidth: 42, height: 42, borderRadius: 12, backgroundColor: c.panel2, borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 }, badgeText: { color: c.ink, fontWeight: '900', fontSize: 11 }, scoreInputs: { flexDirection: 'row', alignItems: 'center' }, score: { width: 48, height: 52, borderRadius: 10, backgroundColor: '#07182b', color: c.ink, fontSize: 24, fontWeight: '900', textAlign: 'center', borderWidth: 1, borderColor: '#315274' }, scoreDisabled: { color: c.muted }, colon: { color: c.muted, fontSize: 24, paddingHorizontal: 7 }, saveStatus: { color: c.lime, textAlign: 'center', marginTop: 10, fontSize: 11, fontWeight: '800' }, saveError: { color: c.red }, result: { color: c.lime, textAlign: 'center', marginTop: 14, fontWeight: '700' }, button: { backgroundColor: c.lime, borderRadius: 11, paddingVertical: 14, alignItems: 'center', marginTop: 16 }, buttonText: { color: c.bg, fontWeight: '900' }, deadline: { backgroundColor: c.panel2, borderLeftWidth: 4, borderLeftColor: c.lime, borderRadius: 10, padding: 14, marginBottom: 13 }, deadlineLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.4 }, deadlineValue: { color: c.ink, fontSize: 17, fontWeight: '800', marginTop: 3 }, teamRank: { flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: c.line, paddingVertical: 10 }, rankNo: { width: 25, color: c.muted, fontWeight: '900', textAlign: 'center' }, teamName: { color: c.ink, flex: 1, fontWeight: '700' }, arrows: { flexDirection: 'row', gap: 10 }, arrow: { color: c.lime, fontSize: 23, padding: 4 }, rankingRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.panel, borderRadius: 12, padding: 14, marginBottom: 8 }, rankingName: { flex: 1, color: c.ink, fontWeight: '800' }, exacts: { color: c.muted, fontSize: 12, marginRight: 12 }, points: { color: c.lime, fontSize: 17, fontWeight: '900' }, empty: { padding: 40, alignItems: 'center' }, authWrap: { flex: 1, padding: 24, justifyContent: 'center' }, brand: { color: c.lime, fontSize: 13, fontWeight: '900', letterSpacing: 3 }, authTitle: { color: c.ink, fontSize: 34, fontWeight: '900', marginTop: 8, marginBottom: 8 }, muted: { color: c.muted, lineHeight: 20 }, fieldWrap: { marginTop: 18 }, label: { color: c.muted, fontSize: 12, fontWeight: '800', marginBottom: 7 }, field: { backgroundColor: c.panel, color: c.ink, borderRadius: 11, borderWidth: 1, borderColor: c.line, padding: 14, fontSize: 16 }, link: { color: c.lime, textAlign: 'center', padding: 18, fontWeight: '700' }, legalLinks: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 6 }, legalLink: { color: c.lime, fontWeight: '700', paddingVertical: 8 }, cardTitle: { color: c.ink, fontSize: 20, fontWeight: '900', marginBottom: 5 }, spacer: { height: 15 }, danger: { color: c.red, textAlign: 'center', marginTop: 20, fontWeight: '800' }, legalHeading: { color: c.ink, fontWeight: '900', marginTop: 16, marginBottom: 5 }, legalText: { color: c.muted, lineHeight: 21, marginTop: 6 }
 });
