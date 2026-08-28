@@ -32,6 +32,13 @@ Die App kann ohne Store als installierbare Web-App betrieben werden:
 
 Bei Cloudflare Pages oder Netlify kann dafür ein kostenloses Projekt mit Build-Befehl `npm run build:web` und Ausgabeverzeichnis `dist` angelegt werden. Die bereitgestellte HTTPS-Adresse wird anschließend an die Mitspieler geschickt. Android/Chrome zeigt „App installieren“ an; auf iPhone/iPad wird in Safari „Teilen → Zum Home-Bildschirm“ verwendet.
 
+In der aktuellen Cloudflare-Workers-Oberfläche lauten die Befehle:
+
+- Build command: `npm run build:web`
+- Deploy command: `npx wrangler deploy`
+
+Die Datei `wrangler.jsonc` veröffentlicht `dist` als Single Page Application.
+
 Die PWA speichert nur die Programmoberfläche offline. Anmeldung, Tipps, Startzeitprüfung und Ranglisten benötigen absichtlich eine Internetverbindung, damit keine veralteten oder verspäteten Tipps gespeichert werden.
 
 ## Saison einrichten
