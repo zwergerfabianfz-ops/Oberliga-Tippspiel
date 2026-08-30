@@ -103,7 +103,16 @@ function MainApp({ session }: { session: Session | null }) {
     const { data: teamRows } = current ? await supabase.from('teams').select('*').eq('season_id', current.id).order('name') : { data: null };
     const teamsById = new Map<string, Team>();
     if (teamRows?.length) {
-      const mapped: Team[] = teamRows.map(t => ({ id: t.id, name: t.name, shortName: t.short_name, logoUrl: t.logo_url, isCompetitor: t.is_competitor !== false }));
+      const regularTeamIds = new Set((gameRows ?? [])
+        .filter(game => game.phase === 'regular' && !game.is_preseason)
+        .flatMap(game => [game.home_team_id, game.away_team_id]));
+      const mapped: Team[] = teamRows.map(t => ({
+        id: t.id,
+        name: t.name,
+        shortName: t.short_name,
+        logoUrl: t.logo_url,
+        isCompetitor: regularTeamIds.size ? regularTeamIds.has(t.id) : t.is_competitor !== false,
+      }));
       mapped.forEach(team => teamsById.set(team.id, team));
       const competitors = mapped.filter(team => team.isCompetitor !== false);
       const { data: savedOrder } = await supabase.from('table_predictions').select('team_id,predicted_position').eq('season_id', current.id).order('predicted_position');

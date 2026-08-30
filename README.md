@@ -76,6 +76,8 @@ Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt
 
 Die Migration `supabase/migrations/202608300003_preseason_games.sql` ergänzt Testspiele. Der Import übernimmt aus der offiziellen DEB-Testspiel-Liga nur Partien, an denen mindestens ein Oberliga-Süd-Team beteiligt ist. Diese Tipps werden gespeichert, aber nie für die Rangliste gewertet. Fremde Testspielgegner erscheinen nicht im Hauptrunden-Tabellentipp. Mit dem Beginn des ersten Hauptrundenspiels werden Testspiel-Auswahl und Testspielverlauf automatisch ausgeblendet.
 
+`supabase/migrations/202608300005_fix_table_prediction_teams.sql` bereinigt die Kennzeichnung eventuell älterer Testgegner und validiert den Tabellentipp ausschließlich gegen die Mannschaften, die tatsächlich an der Hauptrunde teilnehmen.
+
 ## Tipp-Erinnerungen
 
 Die Migration `supabase/migrations/202608300004_push_reminders.sql` speichert freiwillige Push-Abonnements und bereits versandte Erinnerungen. Danach wird die Edge Function `send-tip-reminders` veröffentlicht. Für sie müssen `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` und `REMINDER_SECRET` als Function Secrets gesetzt und die eingebaute JWT-Prüfung ausgeschaltet werden; die Funktion prüft stattdessen `REMINDER_SECRET` selbst.
