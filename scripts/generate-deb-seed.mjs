@@ -33,6 +33,7 @@ const games = rows.map(row => {
   const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
   return {
     external_id: String(row.id), phase: 'regular', starts_at: new Date(row.gameUtcTimestamp).toISOString(),
+    matchday: row.gameDay ?? null,
     home_external_id: String(row.homeTeamId), away_external_id: String(row.awayTeamId),
     home_score: isFinal ? row.homeTeamScore : null, away_score: isFinal ? row.awayTeamScore : null,
     is_final: isFinal,
@@ -69,19 +70,20 @@ with current_season as (
   select id from public.seasons where external_division_id = ${literal(divisionId)}
 ), payload as (
   select * from jsonb_to_recordset($games$${JSON.stringify(games)}$games$::jsonb)
-    as x(external_id text, phase text, starts_at timestamptz, home_external_id text,
+    as x(external_id text, phase text, starts_at timestamptz, matchday smallint, home_external_id text,
       away_external_id text, home_score smallint, away_score smallint, is_final boolean)
 )
-insert into public.games (season_id, external_id, phase, starts_at, home_team_id, away_team_id,
+insert into public.games (season_id, external_id, phase, starts_at, matchday, home_team_id, away_team_id,
   home_score, away_score, is_final, updated_at)
 select current_season.id, payload.external_id, payload.phase::public.game_phase, payload.starts_at,
-  home.id, away.id, payload.home_score, payload.away_score, payload.is_final, now()
+  payload.matchday, home.id, away.id, payload.home_score, payload.away_score, payload.is_final, now()
 from current_season cross join payload
 join public.teams home on home.season_id = current_season.id and home.external_id = payload.home_external_id
 join public.teams away on away.season_id = current_season.id and away.external_id = payload.away_external_id
 on conflict (season_id, external_id) do update set
   phase = excluded.phase,
   starts_at = excluded.starts_at,
+  matchday = excluded.matchday,
   home_team_id = excluded.home_team_id,
   away_team_id = excluded.away_team_id,
   home_score = excluded.home_score,

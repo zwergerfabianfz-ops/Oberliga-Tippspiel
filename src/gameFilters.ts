@@ -9,6 +9,9 @@ export function gamesForNextMatchday(games: Game[], now = new Date()): Game[] {
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())[0];
 
   if (!nextGame) return [];
+  if (nextGame.matchday !== null) {
+    return games.filter(game => game.matchday === nextGame.matchday);
+  }
   const targetDay = berlinDay(nextGame.startsAt);
   return games.filter(game => berlinDay(game.startsAt) === targetDay);
 }

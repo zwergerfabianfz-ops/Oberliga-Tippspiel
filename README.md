@@ -70,6 +70,8 @@ Für die Erstbefüllung kann der geprüfte SQL-Seed `supabase/migrations/2026082
 
 Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations/202608300001_live_scores_and_recent_tips.sql` einmal im SQL Editor ausgeführt und die Edge Function `sync-deb` veröffentlicht. Angemeldete App-Nutzer dürfen den Import anstoßen, können dessen Daten aber nicht verändern. Während eines möglichen Live-Spiels fragt die App höchstens einmal pro Minute an; die Funktion überspringt einen Abruf, wenn die Daten vor weniger als 45 Sekunden aktualisiert wurden.
 
+Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt die offizielle HockeyData-Spieltagsnummer. Dadurch umfasst „Nächster Spieltag“ auch Begegnungen desselben Spieltags, die an unterschiedlichen Kalendertagen stattfinden.
+
 ## Tabellenwertung
 
 Bei `N` Teams erhält jedes Team `max(0, N − Positionsabweichung)` Punkte. Bei 13 Teams ergeben ein exakter Platz 13 Punkte, ein Platz daneben 12 Punkte usw. Spiel- und Tabellenpunkte werden in getrennten Ranglisten geführt.

@@ -10,6 +10,7 @@ export type Team = { id: string; name: string; shortName: string; logoUrl?: stri
 export type Game = {
   id: string;
   phase: 'regular' | 'playoffs';
+  matchday: number | null;
   startsAt: string;
   homeTeam: Team;
   awayTeam: Team;

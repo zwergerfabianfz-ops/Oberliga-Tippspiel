@@ -161,6 +161,7 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   const [scope, setScope] = useState<'next' | 'all'>('next');
   const phaseGames = games.filter(game => game.phase === phase);
   const shown = scope === 'next' ? gamesForNextMatchday(phaseGames) : phaseGames;
+  const shownMatchday = scope === 'next' ? shown[0]?.matchday : null;
   const save = useCallback(async (game: Game, home: string, away: string): Promise<boolean> => {
     const h = Number(home), a = Number(away);
     if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return false;
@@ -177,7 +178,7 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
       <FilterButton label="Phase" value={phase === 'regular' ? 'Hauptrunde' : 'Playoffs'} onPress={() => setPhase(current => current === 'regular' ? 'playoffs' : 'regular')} />
       <FilterButton label="Anzeige" value={scope === 'next' ? 'Nächster Spieltag' : 'Alle Spiele'} onPress={() => setScope(current => current === 'next' ? 'all' : 'next')} />
     </View>
-    <Text style={styles.sectionHint}>{scope === 'next' ? 'Alle Spiele des nächsten anstehenden Spieltags. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
+    <Text style={styles.sectionHint}>{scope === 'next' ? shownMatchday ? `Kompletter ${shownMatchday}. Spieltag. ` : 'Alle Spiele des nächsten anstehenden Spieltags. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
     {shown.map(game => <GameCard key={game.id} game={game} onSave={save} />)}
     {!shown.length && <Empty text={scope === 'next' ? 'Kein weiterer Spieltag in dieser Phase.' : 'Noch keine Spiele in dieser Phase.'} />}
   </>;
@@ -303,7 +304,7 @@ function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndi
 function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippverlauf', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
-function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.phase, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
