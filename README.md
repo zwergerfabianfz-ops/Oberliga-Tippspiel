@@ -12,6 +12,7 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 - getrennte Ranglisten für Spiel- und Tabellentipps
 - Tippverlauf aller Mitspieler für bereits gestartete Spiele der letzten 14 Tage
 - automatisch aktualisierte Live-Spielstände während laufender Spiele
+- optionale Web-Push-Erinnerung etwa eine Stunde vor ungetippten Spielen
 - serverseitig konfigurierbarer DEB/HockeyData-Import
 - Expo/EAS-Konfiguration für App Store und Google Play
 - vom Auftraggeber bereitgestelltes App-Icon (`assets/icon.jpeg`) und verlustfrei konvertierte Store-Datei (`assets/icon.png`)
@@ -74,6 +75,31 @@ Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations
 Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt die offizielle HockeyData-Spieltagsnummer. Dadurch umfasst „Nächster Spieltag“ auch Begegnungen desselben Spieltags, die an unterschiedlichen Kalendertagen stattfinden.
 
 Die Migration `supabase/migrations/202608300003_preseason_games.sql` ergänzt Testspiele. Der Import übernimmt aus der offiziellen DEB-Testspiel-Liga nur Partien, an denen mindestens ein Oberliga-Süd-Team beteiligt ist. Diese Tipps werden gespeichert, aber nie für die Rangliste gewertet. Fremde Testspielgegner erscheinen nicht im Hauptrunden-Tabellentipp. Mit dem Beginn des ersten Hauptrundenspiels werden Testspiel-Auswahl und Testspielverlauf automatisch ausgeblendet.
+
+## Tipp-Erinnerungen
+
+Die Migration `supabase/migrations/202608300004_push_reminders.sql` speichert freiwillige Push-Abonnements und bereits versandte Erinnerungen. Danach wird die Edge Function `send-tip-reminders` veröffentlicht. Für sie müssen `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` und `REMINDER_SECRET` als Function Secrets gesetzt und die eingebaute JWT-Prüfung ausgeschaltet werden; die Funktion prüft stattdessen `REMINDER_SECRET` selbst.
+
+Ein Cronjob ruft die Function alle fünf Minuten auf. Beispiel (Platzhalter ersetzen):
+
+```sql
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+select cron.schedule(
+  'send-tip-reminders',
+  '*/5 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://PROJECT_REF.supabase.co/functions/v1/send-tip-reminders',
+    headers := '{"Content-Type":"application/json","x-reminder-secret":"REMINDER_SECRET"}'::jsonb,
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
+
+Die Nutzer aktivieren die Erinnerung freiwillig im Profil. Die Function sendet nur dann, wenn ein Spiel in 55 bis 65 Minuten beginnt, der Nutzer dafür noch keinen Tipp abgegeben hat und für dieses Spiel noch keine Erinnerung versendet wurde. Unter iOS/iPadOS steht Web Push ab Version 16.4 für zum Home-Bildschirm hinzugefügte Web-Apps zur Verfügung.
 
 ## Tabellenwertung
 

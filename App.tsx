@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
+import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
 import { isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
@@ -281,8 +282,36 @@ function RankingScreen({ games, table, season }: { games: LeaderboardEntry[]; ta
 }
 
 function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefresh: () => void }) {
+  const pushSupported = pushNotificationsSupported();
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  useEffect(() => {
+    if (pushSupported) pushNotificationsEnabled().then(setPushEnabled).catch(() => setPushEnabled(false));
+  }, [pushSupported]);
+  async function togglePush() {
+    if (!session || pushBusy) return;
+    setPushBusy(true);
+    try {
+      if (pushEnabled) await disablePushNotifications();
+      else await enablePushNotifications(session.user.id);
+      setPushEnabled(!pushEnabled);
+    } catch (error) {
+      Alert.alert('Benachrichtigung nicht aktiviert', error instanceof Error ? error.message : 'Bitte versuche es erneut.');
+    } finally {
+      setPushBusy(false);
+    }
+  }
+  async function signOut() {
+    if (pushEnabled) await disablePushNotifications().catch(() => undefined);
+    await supabase.auth.signOut();
+  }
   return <>
-    <View style={styles.card}><Text style={styles.cardTitle}>Mein Konto</Text><Text style={styles.muted}>{session?.user.email ?? 'Demo-Spieler'}</Text><View style={styles.spacer} /><Button label="Daten aktualisieren" onPress={onRefresh} />{session && <Pressable onPress={() => supabase.auth.signOut()}><Text style={styles.danger}>Abmelden</Text></Pressable>}</View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Mein Konto</Text><Text style={styles.muted}>{session?.user.email ?? 'Demo-Spieler'}</Text><View style={styles.spacer} /><Button label="Daten aktualisieren" onPress={onRefresh} />{session && <Pressable onPress={signOut}><Text style={styles.danger}>Abmelden</Text></Pressable>}</View>
+    {Platform.OS === 'web' && <View style={styles.card}>
+      <Text style={styles.cardTitle}>Tipp-Erinnerung</Text>
+      <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn – aber nur, wenn dein Tipp für dieses Spiel noch fehlt.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
+      {pushSupported && <Button label={pushBusy ? 'Bitte warten …' : pushEnabled ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten'} onPress={togglePush} disabled={pushBusy} />}
+    </View>}
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Impressum</Text>
       <Text style={styles.legalText}>Angaben gemäß § 5 DDG</Text>

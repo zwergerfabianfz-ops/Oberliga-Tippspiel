@@ -4,6 +4,7 @@ type HockeyDataRow = {
   id: string;
   gameUtcTimestamp: number;
   gameDay?: number | null;
+  gameRound?: number | null;
   homeTeamId: number | string;
   homeTeamLongName: string;
   homeTeamShortName: string;
@@ -97,7 +98,7 @@ Deno.serve(async req => {
       season_id: season.id,
       external_id: row.id,
       phase: season.playoffs_start_at && row.gameUtcTimestamp >= new Date(season.playoffs_start_at).getTime() ? 'playoffs' : 'regular',
-      matchday: row.gameDay ?? null,
+      matchday: row.gameRound ?? row.gameDay ?? null,
       starts_at: new Date(row.gameUtcTimestamp).toISOString(),
       home_team_id: teamIds.get(String(row.homeTeamId)),
       away_team_id: teamIds.get(String(row.awayTeamId)),

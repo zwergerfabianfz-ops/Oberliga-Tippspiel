@@ -25,6 +25,21 @@ self.addEventListener('fetch',event=>{
   }
   event.respondWith(caches.match(event.request).then(cached=>cached||fetch(event.request)));
 });
+self.addEventListener('push',event=>{
+  const data=event.data?.json()||{};
+  event.waitUntil(self.registration.showNotification(data.title||'Oberliga Tippspiel',{
+    body:data.body||'Ein Spiel beginnt bald und dein Tipp fehlt noch.',
+    icon:'/icons/icon-192.png',badge:'/icons/icon-192.png',data:{url:data.url||'/'},tag:'tip-reminder'
+  }));
+});
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  const target=new URL(event.notification.data?.url||'/',self.location.origin).href;
+  event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{
+    const existing=windows.find(client=>client.url.startsWith(self.location.origin));
+    return existing?existing.focus().then(()=>existing.navigate(target)):clients.openWindow(target);
+  }));
+});
 `;
 await writeFile(path.join(root, 'sw.js'), source);
 console.log(`Generated dist/sw.js with ${publicFiles.length} cached files.`);
