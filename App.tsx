@@ -259,7 +259,11 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
         </View>
         <View style={styles.tipList}>
           <View style={styles.tipHeader}><Text style={styles.tipHeaderName}>SPIELER</Text><Text style={styles.tipHeaderValue}>TIPP</Text><Text style={styles.tipHeaderPoints}>PUNKTE</Text></View>
-          {tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}><Text numberOfLines={1} style={[styles.tipName, styles.tipNameAligned]}>{tip.displayName}</Text><Text style={[styles.tipValue, styles.tipValueAligned]}>{tip.predictedHome}:{tip.predictedAway}</Text><Text style={[styles.tipPoints, styles.tipPointsAligned]}>{game.isFinal && tip.points !== null ? `${tip.points} P` : '–'}</Text></View>)}
+          {tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}>
+            <View style={styles.tipNameColumn}><Text numberOfLines={1} style={styles.tipName}>{tip.displayName}</Text></View>
+            <View style={styles.tipValueColumn}><Text style={styles.tipValue}>{tip.predictedHome}:{tip.predictedAway}</Text></View>
+            <View style={styles.tipPointsColumn}><Text style={styles.tipPoints}>{game.isFinal && tip.points !== null ? `${tip.points} P` : '–'}</Text></View>
+          </View>)}
         </View>
       </View>;
     })}
@@ -368,4 +372,7 @@ const styles = StyleSheet.create({
   tipNameAligned: { flex: 0, width: '34%' },
   tipValueAligned: { minWidth: 0, width: '32%' },
   tipPointsAligned: { width: '34%' },
+  tipNameColumn: { width: '34%' },
+  tipValueColumn: { width: '32%', alignItems: 'center' },
+  tipPointsColumn: { width: '34%', alignItems: 'flex-end' },
 });
