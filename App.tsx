@@ -159,7 +159,7 @@ function MainApp({ session }: { session: Session | null }) {
       {refreshing ? <ActivityIndicator color="#b8f341" /> : null}
       {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} />}
       {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
-      {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} session={session} />}
+      {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} session={session} onSaved={setTeams} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
       {tab === 'profil' && <ProfileScreen session={session} onRefresh={load} />}
     </ScrollView>
@@ -264,7 +264,7 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
   </>;
 }
 
-function TableTipScreen({ season, teams, session }: { season: Season; teams: Team[]; session: Session | null }) {
+function TableTipScreen({ season, teams, session, onSaved }: { season: Season; teams: Team[]; session: Session | null; onSaved: (teams: Team[]) => void }) {
   const [ordered, setOrdered] = useState(teams);
   const open = new Date() < new Date(season.tablePredictionDeadline);
   useEffect(() => setOrdered(teams), [teams]);
@@ -272,6 +272,7 @@ function TableTipScreen({ season, teams, session }: { season: Season; teams: Tea
   async function save() {
     if (!open) return;
     if (session) { const { error } = await supabase.rpc('save_table_prediction', { p_season_id: season.id, p_team_ids: ordered.map(t => t.id) }); if (error) { Alert.alert('Nicht gespeichert', error.message); return; } }
+    onSaved([...ordered]);
     Alert.alert('Tabellentipp gespeichert', 'Du kannst ihn bis zur Deadline weiter ändern.');
   }
   const deadline = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(season.tablePredictionDeadline));
