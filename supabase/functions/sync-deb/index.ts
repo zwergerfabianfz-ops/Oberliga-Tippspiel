@@ -17,15 +17,32 @@ type HockeyDataRow = {
   gameHasEnded?: boolean;
 };
 
-const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Type': 'application/json',
+};
 
 Deno.serve(async req => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-  if (req.headers.get('Authorization') !== `Bearer ${Deno.env.get('SYNC_SECRET')}`) return new Response('Unauthorized', { status: 401 });
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const authorization = req.headers.get('Authorization') ?? '';
+  const isTrustedSync = Boolean(Deno.env.get('SYNC_SECRET')) && authorization === `Bearer ${Deno.env.get('SYNC_SECRET')}`;
+  if (!isTrustedSync) {
+    const token = authorization.replace(/^Bearer\s+/i, '');
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return new Response('Unauthorized', { status: 401, headers: cors });
+  }
+
   const { data: season, error: seasonError } = await supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1).single();
   if (seasonError) return json({ error: seasonError.message }, 500);
+
+  const { data: latestGame } = await supabase.from('games').select('updated_at').eq('season_id', season.id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  if (latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 45_000) {
+    return json({ skipped: true, reason: 'recently-synced' });
+  }
 
   const apiKey = Deno.env.get('HOCKEYDATA_API_KEY') ?? await discoverPublicApiKey();
   if (!apiKey) return json({ error: 'Kein HockeyData-Key auf der DEB-Seite gefunden.' }, 503);
@@ -55,21 +72,24 @@ Deno.serve(async req => {
 
   const games = rows.map(row => {
     const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
+    const isLive = !isFinal && [1, 2].includes(row.gameStatus ?? 0);
     return {
-    season_id: season.id,
-    external_id: row.id,
-    phase: 'regular',
-    starts_at: new Date(row.gameUtcTimestamp).toISOString(),
-    home_team_id: teamIds.get(String(row.homeTeamId)),
-    away_team_id: teamIds.get(String(row.awayTeamId)),
-    home_score: isFinal ? row.homeTeamScore ?? null : null,
-    away_score: isFinal ? row.awayTeamScore ?? null : null,
-    is_final: isFinal,
-    updated_at: new Date().toISOString(),
-  }});
+      season_id: season.id,
+      external_id: row.id,
+      phase: season.playoffs_start_at && row.gameUtcTimestamp >= new Date(season.playoffs_start_at).getTime() ? 'playoffs' : 'regular',
+      starts_at: new Date(row.gameUtcTimestamp).toISOString(),
+      home_team_id: teamIds.get(String(row.homeTeamId)),
+      away_team_id: teamIds.get(String(row.awayTeamId)),
+      home_score: isLive || isFinal ? row.homeTeamScore ?? 0 : null,
+      away_score: isLive || isFinal ? row.awayTeamScore ?? 0 : null,
+      is_live: isLive,
+      is_final: isFinal,
+      updated_at: new Date().toISOString(),
+    };
+  });
   const { error: gameError } = await supabase.from('games').upsert(games, { onConflict: 'season_id,external_id' });
   if (gameError) return json({ error: gameError.message }, 500);
-  return json({ importedGames: games.length, importedTeams: teams.length });
+  return json({ importedGames: games.length, importedTeams: teams.length, liveGames: games.filter(game => game.is_live).length });
 });
 
 async function discoverPublicApiKey() {

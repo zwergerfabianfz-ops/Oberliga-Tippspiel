@@ -17,9 +17,9 @@ import type { Session } from '@supabase/supabase-js';
 import { configurePwa } from './src/pwa';
 import { isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
-import type { Game, LeaderboardEntry, Season, Team } from './src/types';
+import type { Game, LeaderboardEntry, RecentPrediction, Season, Team } from './src/types';
 
-type Tab = 'spiele' | 'tabelle' | 'rangliste' | 'profil';
+type Tab = 'spiele' | 'verlauf' | 'tabelle' | 'rangliste' | 'profil';
 
 const demoSeason: Season = { id: 'demo', name: 'Oberliga Süd 2026/27', tablePredictionDeadline: '2026-09-17T21:59:59.000Z', status: 'upcoming' };
 
@@ -79,20 +79,25 @@ function MainApp({ session }: { session: Session | null }) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([]);
   const [tableRanking, setTableRanking] = useState<LeaderboardEntry[]>([]);
+  const [recentPredictions, setRecentPredictions] = useState<RecentPrediction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const gamesRef = useRef<Game[]>([]);
+  const liveSyncRunning = useRef(false);
 
-  async function load() {
+  const load = useCallback(async (showSpinner = true) => {
     if (!session) return;
-    setRefreshing(true);
-    const [{ data: seasonRows }, { data: gameRows }, { data: gameRanks }, { data: tableRanks }] = await Promise.all([
+    if (showSpinner) setRefreshing(true);
+    const [{ data: seasonRows }, { data: gameRows }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
       supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1),
       supabase.from('games_with_my_predictions').select('*').order('starts_at'),
       supabase.rpc('game_leaderboard'), supabase.rpc('table_leaderboard'),
+      supabase.rpc('recent_game_predictions'),
     ]);
     const current = seasonRows?.[0];
     if (current) setSeason({ id: current.id, name: current.name, tablePredictionDeadline: current.table_prediction_deadline, status: current.status });
     if (gameRanks) setGameRanking(gameRanks.map(mapRank));
     if (tableRanks) setTableRanking(tableRanks.map(mapRank));
+    if (recentRows) setRecentPredictions(recentRows.map(mapRecentPrediction));
     const { data: teamRows } = current ? await supabase.from('teams').select('*').eq('season_id', current.id).order('name') : { data: null };
     const teamsById = new Map<string, Team>();
     if (teamRows?.length) {
@@ -108,9 +113,30 @@ function MainApp({ session }: { session: Session | null }) {
     }
     setGames((gameRows ?? []).map(row => mapGame(row, teamsById)));
     setRefreshing(false);
-  }
+  }, [session]);
 
-  useEffect(() => { load(); }, [session]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { gamesRef.current = games; }, [games]);
+  useEffect(() => {
+    if (!session) return;
+    const refreshLiveScores = async () => {
+      const now = Date.now();
+      const potentialLiveGame = gamesRef.current.some(game => {
+        const start = new Date(game.startsAt).getTime();
+        return !game.isFinal && start <= now + 10 * 60_000 && start >= now - 5 * 60 * 60_000;
+      });
+      if (!potentialLiveGame || liveSyncRunning.current) return;
+      liveSyncRunning.current = true;
+      try {
+        const { error } = await supabase.functions.invoke('sync-deb');
+        if (!error) await load(false);
+      } finally {
+        liveSyncRunning.current = false;
+      }
+    };
+    const timer = setInterval(refreshLiveScores, 60_000);
+    return () => clearInterval(timer);
+  }, [load, session]);
 
   return <SafeAreaView style={styles.safe}>
     <StatusBar style="light" />
@@ -119,11 +145,12 @@ function MainApp({ session }: { session: Session | null }) {
     <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} refreshControl={undefined}>
       {refreshing ? <ActivityIndicator color="#b8f341" /> : null}
       {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} />}
+      {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
       {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} session={session} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
       {tab === 'profil' && <ProfileScreen session={session} onRefresh={load} />}
     </ScrollView>
-    <View style={styles.nav}>{(['spiele', 'tabelle', 'rangliste', 'profil'] as Tab[]).map(item => <Pressable key={item} style={styles.navItem} onPress={() => setTab(item)}><Text style={[styles.navIcon, tab === item && styles.active]}>{({ spiele: '◫', tabelle: '≡', rangliste: '♛', profil: '●' } as const)[item]}</Text><Text style={[styles.navLabel, tab === item && styles.active]}>{item[0]!.toUpperCase() + item.slice(1)}</Text></Pressable>)}</View>
+    <View style={styles.nav}>{(['spiele', 'verlauf', 'tabelle', 'rangliste', 'profil'] as Tab[]).map(item => <Pressable key={item} style={styles.navItem} onPress={() => setTab(item)}><Text style={[styles.navIcon, tab === item && styles.active]}>{({ spiele: '◫', verlauf: '◷', tabelle: '≡', rangliste: '♛', profil: '●' } as const)[item]}</Text><Text style={[styles.navLabel, tab === item && styles.active]}>{item[0]!.toUpperCase() + item.slice(1)}</Text></Pressable>)}</View>
   </SafeAreaView>;
 }
 
@@ -177,12 +204,38 @@ function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a
     return () => { cancelled = true; clearTimeout(timer); };
   }, [away, game, home, onSave, open]);
   const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
+  const gameState = game.isLive ? 'LIVE' : open ? 'OFFEN' : game.isFinal ? 'BEENDET' : 'GESCHLOSSEN';
   return <View style={styles.card}>
-    <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, !open && styles.closed]}>{open ? 'OFFEN' : 'GESCHLOSSEN'}</Text></View>
+    <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, !open && styles.closed, game.isLive && styles.live]}>{gameState}</Text></View>
     <View style={styles.matchRow}><TeamBlock team={game.homeTeam} /><View style={styles.scoreInputs}><ScoreInput value={home} onChange={setHome} disabled={!open} /><Text style={styles.colon}>:</Text><ScoreInput value={away} onChange={setAway} disabled={!open} /></View><TeamBlock team={game.awayTeam} /></View>
-    {game.homeScore !== null && <Text style={styles.result}>Endstand {game.homeScore}:{game.awayScore} · {game.points ?? 0} Punkte</Text>}
+    {game.homeScore !== null && <Text style={[styles.result, game.isLive && styles.liveText]}>{game.isLive ? 'Live' : 'Endstand'} {game.homeScore}:{game.awayScore}{game.isFinal ? ` · ${game.points ?? 0} Punkte` : ''}</Text>}
     {open && saveState !== 'idle' && <Text style={[styles.saveStatus, saveState === 'error' && styles.saveError]}>{saveState === 'saved' ? '✓ Gespeichert' : saveState === 'error' ? 'Nicht gespeichert' : saveState === 'saving' ? 'Speichert …' : 'Wird gespeichert …'}</Text>}
   </View>;
+}
+
+function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] }) {
+  const games = new Map<string, { game: RecentPrediction; tips: RecentPrediction[] }>();
+  for (const prediction of predictions) {
+    const entry = games.get(prediction.gameId) ?? { game: prediction, tips: [] };
+    entry.tips.push(prediction);
+    games.set(prediction.gameId, entry);
+  }
+  return <>
+    <Text style={styles.sectionHint}>Hier siehst du die Tipps aller Mitspieler aus den letzten 14 Tagen. Sie werden erst nach dem jeweiligen Spielbeginn sichtbar.</Text>
+    {[...games.values()].map(({ game, tips }) => {
+      const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
+      return <View key={game.gameId} style={styles.card}>
+        <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.closed, game.isLive && styles.live]}>{game.isLive ? 'LIVE' : game.isFinal ? 'BEENDET' : 'GESTARTET'}</Text></View>
+        <View style={styles.historyMatch}>
+          <View style={styles.historyTeam}><TeamLogo team={game.homeTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.homeTeam.name}</Text></View>
+          <Text style={[styles.historyScore, game.isLive && styles.liveText]}>{game.homeScore === null ? '– : –' : `${game.homeScore} : ${game.awayScore}`}</Text>
+          <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
+        </View>
+        <View style={styles.tipList}>{tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}><Text style={styles.tipName}>{tip.displayName}</Text><Text style={styles.tipValue}>{tip.predictedHome}:{tip.predictedAway}</Text>{game.isFinal && <Text style={styles.tipPoints}>{tip.points ?? 0} P</Text>}</View>)}</View>
+      </View>;
+    })}
+    {!games.size && <Empty text="In den letzten 14 Tagen gibt es noch keine sichtbaren Tipps." />}
+  </>;
 }
 
 function TableTipScreen({ season, teams, session }: { season: Season; teams: Team[]; session: Session | null }) {
@@ -239,12 +292,13 @@ function Button({ label, onPress, disabled }: { label: string; onPress: () => vo
 function Segment<T extends string>({ options, value, onChange }: { options: [T, string][]; value: T; onChange: (v: T) => void }) { return <View style={styles.segment}>{options.map(([key, label]) => <Pressable key={key} onPress={() => onChange(key)} style={[styles.segmentItem, key === value && styles.segmentActive]}><Text style={[styles.segmentText, key === value && styles.segmentTextActive]}>{label}</Text></Pressable>)}</View>; }
 function Empty({ text }: { text: string }) { return <View style={styles.empty}><Text style={styles.muted}>{text}</Text></View>; }
 function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndicator style={{ flex: 1 }} color="#b8f341" /></SafeAreaView>; }
-function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
+function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippverlauf', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
-function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.phase, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.phase, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: c.bg }, content: { flex: 1 }, contentInner: { padding: 18, paddingBottom: 34 }, header: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, kicker: { color: c.lime, fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }, title: { color: c.ink, fontSize: 28, fontWeight: '900', marginTop: 3 }, puck: { width: 42, height: 42, borderRadius: 21, backgroundColor: c.panel2, justifyContent: 'center', alignItems: 'center' }, demoBanner: { backgroundColor: c.lime, paddingVertical: 7, alignItems: 'center' }, demoText: { color: c.bg, fontWeight: '900', fontSize: 11, letterSpacing: 1 }, nav: { borderTopWidth: 1, borderTopColor: c.line, backgroundColor: '#09182a', flexDirection: 'row', paddingTop: 8, paddingBottom: 10 }, navItem: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { color: c.muted, fontSize: 19 }, navLabel: { color: c.muted, fontSize: 10, fontWeight: '700' }, active: { color: c.lime }, segment: { padding: 4, borderRadius: 12, backgroundColor: c.panel, flexDirection: 'row', marginBottom: 14 }, segmentItem: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' }, segmentActive: { backgroundColor: c.lime }, segmentText: { color: c.muted, fontWeight: '800' }, segmentTextActive: { color: c.bg }, sectionHint: { color: c.muted, fontSize: 13, lineHeight: 19, marginBottom: 15 }, card: { borderRadius: 16, backgroundColor: c.panel, borderWidth: 1, borderColor: c.line, padding: 16, marginBottom: 13 }, cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 18 }, date: { color: c.muted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }, state: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1 }, closed: { color: c.red }, matchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, teamBlock: { width: '28%', alignItems: 'center' }, teamBlockName: { color: c.ink, textAlign: 'center', fontSize: 12, fontWeight: '700', marginTop: 8 }, logoFrame: { backgroundColor: '#f4f8fc', borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }, logo: { width: 42, height: 42, borderRadius: 12 }, logoLarge: { width: 58, height: 58, borderRadius: 14 }, logoImage: { width: '86%', height: '86%' }, badge: { minWidth: 42, height: 42, borderRadius: 12, backgroundColor: c.panel2, borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 }, badgeText: { color: c.ink, fontWeight: '900', fontSize: 11 }, scoreInputs: { flexDirection: 'row', alignItems: 'center' }, score: { width: 48, height: 52, borderRadius: 10, backgroundColor: '#07182b', color: c.ink, fontSize: 24, fontWeight: '900', textAlign: 'center', borderWidth: 1, borderColor: '#315274' }, scoreDisabled: { color: c.muted }, colon: { color: c.muted, fontSize: 24, paddingHorizontal: 7 }, saveStatus: { color: c.lime, textAlign: 'center', marginTop: 10, fontSize: 11, fontWeight: '800' }, saveError: { color: c.red }, result: { color: c.lime, textAlign: 'center', marginTop: 14, fontWeight: '700' }, button: { backgroundColor: c.lime, borderRadius: 11, paddingVertical: 14, alignItems: 'center', marginTop: 16 }, buttonText: { color: c.bg, fontWeight: '900' }, deadline: { backgroundColor: c.panel2, borderLeftWidth: 4, borderLeftColor: c.lime, borderRadius: 10, padding: 14, marginBottom: 13 }, deadlineLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.4 }, deadlineValue: { color: c.ink, fontSize: 17, fontWeight: '800', marginTop: 3 }, teamRank: { flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: c.line, paddingVertical: 10 }, rankNo: { width: 25, color: c.muted, fontWeight: '900', textAlign: 'center' }, teamName: { color: c.ink, flex: 1, fontWeight: '700' }, arrows: { flexDirection: 'row', gap: 10 }, arrow: { color: c.lime, fontSize: 23, padding: 4 }, rankingRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.panel, borderRadius: 12, padding: 14, marginBottom: 8 }, rankingName: { flex: 1, color: c.ink, fontWeight: '800' }, exacts: { color: c.muted, fontSize: 12, marginRight: 12 }, points: { color: c.lime, fontSize: 17, fontWeight: '900' }, empty: { padding: 40, alignItems: 'center' }, authWrap: { flex: 1, padding: 24, justifyContent: 'center' }, brand: { color: c.lime, fontSize: 13, fontWeight: '900', letterSpacing: 3 }, authTitle: { color: c.ink, fontSize: 34, fontWeight: '900', marginTop: 8, marginBottom: 8 }, muted: { color: c.muted, lineHeight: 20 }, fieldWrap: { marginTop: 18 }, label: { color: c.muted, fontSize: 12, fontWeight: '800', marginBottom: 7 }, field: { backgroundColor: c.panel, color: c.ink, borderRadius: 11, borderWidth: 1, borderColor: c.line, padding: 14, fontSize: 16 }, link: { color: c.lime, textAlign: 'center', padding: 18, fontWeight: '700' }, legalLinks: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 6 }, legalLink: { color: c.lime, fontWeight: '700', paddingVertical: 8 }, cardTitle: { color: c.ink, fontSize: 20, fontWeight: '900', marginBottom: 5 }, spacer: { height: 15 }, danger: { color: c.red, textAlign: 'center', marginTop: 20, fontWeight: '800' }, legalHeading: { color: c.ink, fontWeight: '900', marginTop: 16, marginBottom: 5 }, legalText: { color: c.muted, lineHeight: 21, marginTop: 6 }
+  safe: { flex: 1, backgroundColor: c.bg }, content: { flex: 1 }, contentInner: { padding: 18, paddingBottom: 34 }, header: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, kicker: { color: c.lime, fontSize: 11, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' }, title: { color: c.ink, fontSize: 28, fontWeight: '900', marginTop: 3 }, puck: { width: 42, height: 42, borderRadius: 21, backgroundColor: c.panel2, justifyContent: 'center', alignItems: 'center' }, demoBanner: { backgroundColor: c.lime, paddingVertical: 7, alignItems: 'center' }, demoText: { color: c.bg, fontWeight: '900', fontSize: 11, letterSpacing: 1 }, nav: { borderTopWidth: 1, borderTopColor: c.line, backgroundColor: '#09182a', flexDirection: 'row', paddingTop: 8, paddingBottom: 10 }, navItem: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { color: c.muted, fontSize: 19 }, navLabel: { color: c.muted, fontSize: 9, fontWeight: '700' }, active: { color: c.lime }, segment: { padding: 4, borderRadius: 12, backgroundColor: c.panel, flexDirection: 'row', marginBottom: 14 }, segmentItem: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' }, segmentActive: { backgroundColor: c.lime }, segmentText: { color: c.muted, fontWeight: '800' }, segmentTextActive: { color: c.bg }, sectionHint: { color: c.muted, fontSize: 13, lineHeight: 19, marginBottom: 15 }, card: { borderRadius: 16, backgroundColor: c.panel, borderWidth: 1, borderColor: c.line, padding: 16, marginBottom: 13 }, cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 18 }, date: { color: c.muted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }, state: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1 }, closed: { color: c.red }, live: { color: '#ff3b30' }, liveText: { color: '#ff5a52' }, matchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, teamBlock: { width: '28%', alignItems: 'center' }, teamBlockName: { color: c.ink, textAlign: 'center', fontSize: 12, fontWeight: '700', marginTop: 8 }, logoFrame: { backgroundColor: '#f4f8fc', borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }, logo: { width: 42, height: 42, borderRadius: 12 }, logoLarge: { width: 58, height: 58, borderRadius: 14 }, logoImage: { width: '86%', height: '86%' }, badge: { minWidth: 42, height: 42, borderRadius: 12, backgroundColor: c.panel2, borderWidth: 1, borderColor: '#315274', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 }, badgeText: { color: c.ink, fontWeight: '900', fontSize: 11 }, scoreInputs: { flexDirection: 'row', alignItems: 'center' }, score: { width: 48, height: 52, borderRadius: 10, backgroundColor: '#07182b', color: c.ink, fontSize: 24, fontWeight: '900', textAlign: 'center', borderWidth: 1, borderColor: '#315274' }, scoreDisabled: { color: c.muted }, colon: { color: c.muted, fontSize: 24, paddingHorizontal: 7 }, saveStatus: { color: c.lime, textAlign: 'center', marginTop: 10, fontSize: 11, fontWeight: '800' }, saveError: { color: c.red }, result: { color: c.lime, textAlign: 'center', marginTop: 14, fontWeight: '700' }, historyMatch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }, historyTeam: { width: '34%', alignItems: 'center', gap: 6 }, historyTeamName: { color: c.ink, textAlign: 'center', fontSize: 11, fontWeight: '700' }, historyScore: { color: c.ink, fontSize: 22, fontWeight: '900' }, tipList: { borderTopWidth: 1, borderTopColor: c.line }, tipRow: { flexDirection: 'row', alignItems: 'center', minHeight: 38, borderBottomWidth: 1, borderBottomColor: c.line }, tipName: { color: c.ink, flex: 1, fontWeight: '700' }, tipValue: { color: c.ink, fontSize: 16, fontWeight: '900', minWidth: 48, textAlign: 'center' }, tipPoints: { color: c.lime, width: 42, textAlign: 'right', fontWeight: '900' }, button: { backgroundColor: c.lime, borderRadius: 11, paddingVertical: 14, alignItems: 'center', marginTop: 16 }, buttonText: { color: c.bg, fontWeight: '900' }, deadline: { backgroundColor: c.panel2, borderLeftWidth: 4, borderLeftColor: c.lime, borderRadius: 10, padding: 14, marginBottom: 13 }, deadlineLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.4 }, deadlineValue: { color: c.ink, fontSize: 17, fontWeight: '800', marginTop: 3 }, teamRank: { flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: c.line, paddingVertical: 10 }, rankNo: { width: 25, color: c.muted, fontWeight: '900', textAlign: 'center' }, teamName: { color: c.ink, flex: 1, fontWeight: '700' }, arrows: { flexDirection: 'row', gap: 10 }, arrow: { color: c.lime, fontSize: 23, padding: 4 }, rankingRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.panel, borderRadius: 12, padding: 14, marginBottom: 8 }, rankingName: { flex: 1, color: c.ink, fontWeight: '800' }, exacts: { color: c.muted, fontSize: 12, marginRight: 12 }, points: { color: c.lime, fontSize: 17, fontWeight: '900' }, empty: { padding: 40, alignItems: 'center' }, authWrap: { flex: 1, padding: 24, justifyContent: 'center' }, brand: { color: c.lime, fontSize: 13, fontWeight: '900', letterSpacing: 3 }, authTitle: { color: c.ink, fontSize: 34, fontWeight: '900', marginTop: 8, marginBottom: 8 }, muted: { color: c.muted, lineHeight: 20 }, fieldWrap: { marginTop: 18 }, label: { color: c.muted, fontSize: 12, fontWeight: '800', marginBottom: 7 }, field: { backgroundColor: c.panel, color: c.ink, borderRadius: 11, borderWidth: 1, borderColor: c.line, padding: 14, fontSize: 16 }, link: { color: c.lime, textAlign: 'center', padding: 18, fontWeight: '700' }, legalLinks: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 6 }, legalLink: { color: c.lime, fontWeight: '700', paddingVertical: 8 }, cardTitle: { color: c.ink, fontSize: 20, fontWeight: '900', marginBottom: 5 }, spacer: { height: 15 }, danger: { color: c.red, textAlign: 'center', marginTop: 20, fontWeight: '800' }, legalHeading: { color: c.ink, fontWeight: '900', marginTop: 16, marginBottom: 5 }, legalText: { color: c.muted, lineHeight: 21, marginTop: 6 }
 });

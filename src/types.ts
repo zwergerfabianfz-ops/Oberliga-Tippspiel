@@ -15,8 +15,25 @@ export type Game = {
   awayTeam: Team;
   homeScore: number | null;
   awayScore: number | null;
+  isLive: boolean;
+  isFinal: boolean;
   predictedHome: number | null;
   predictedAway: number | null;
+  points: number | null;
+};
+
+export type RecentPrediction = {
+  gameId: string;
+  startsAt: string;
+  homeTeam: Team;
+  awayTeam: Team;
+  homeScore: number | null;
+  awayScore: number | null;
+  isLive: boolean;
+  isFinal: boolean;
+  displayName: string;
+  predictedHome: number;
+  predictedAway: number;
   points: number | null;
 };
 

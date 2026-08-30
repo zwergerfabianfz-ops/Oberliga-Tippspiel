@@ -9,6 +9,8 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 - Wertung: exaktes Ergebnis 3, richtige Tordifferenz 2, richtiger Sieger 1, sonst 0 Punkte
 - einmaliger, bis zur Deadline änderbarer Hauptrunden-Tabellentipp
 - getrennte Ranglisten für Spiel- und Tabellentipps
+- Tippverlauf aller Mitspieler für bereits gestartete Spiele der letzten 14 Tage
+- automatisch aktualisierte Live-Spielstände während laufender Spiele
 - serverseitig konfigurierbarer DEB/HockeyData-Import
 - Expo/EAS-Konfiguration für App Store und Google Play
 - vom Auftraggeber bereitgestelltes App-Icon (`assets/icon.jpeg`) und verlustfrei konvertierte Store-Datei (`assets/icon.png`)
@@ -56,15 +58,17 @@ Sobald der Playoff-Termin feststeht, wird `playoffs_start_at` gesetzt; der Impor
 
 ## DEB-Import
 
-Die offizielle Seite bindet Spielplan, Ergebnisse und Tabelle über HockeyData ein. Die Edge Function `sync-deb` erwartet:
+Die offizielle Seite bindet Spielplan, Ergebnisse und Tabelle über HockeyData ein. Die Edge Function `sync-deb` verwendet:
 
-- `HOCKEYDATA_API_KEY`: gültiger, serverseitiger Zugang
-- `SYNC_SECRET`: Geheimnis für Cron-/Admin-Aufrufe
+- optional `HOCKEYDATA_API_KEY`: eigener serverseitiger Zugang; andernfalls wird der öffentliche Widget-Key der DEB-Seite ermittelt
+- optional `SYNC_SECRET`: Geheimnis für Cron-/Admin-Aufrufe
 - die automatisch verfügbaren Supabase-Variablen
 
 Der Importer liest den jeweils öffentlich eingebetteten Widget-Key serverseitig von der DEB-Seite und übermittelt den von HockeyData erwarteten Referer. Für die Saison 2026/27 liefert Division `21614` derzeit 14 Teams und 364 Hauptrundenspiele. Der Key wird nicht in den Mobil- oder PWA-Client eingebaut. Vor dauerhaftem automatischem Abruf sollte die Erlaubnis zur Weiterverwendung mit DEB/HockeyData geklärt werden.
 
 Für die Erstbefüllung kann der geprüfte SQL-Seed `supabase/migrations/202608280002_seed_oberliga_sued_2026.sql` einmal im Supabase SQL Editor ausgeführt werden. Ein neuer Stand lässt sich mit `npm run generate:deb-seed` erzeugen.
+
+Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations/202608300001_live_scores_and_recent_tips.sql` einmal im SQL Editor ausgeführt und die Edge Function `sync-deb` veröffentlicht. Angemeldete App-Nutzer dürfen den Import anstoßen, können dessen Daten aber nicht verändern. Während eines möglichen Live-Spiels fragt die App höchstens einmal pro Minute an; die Funktion überspringt einen Abruf, wenn die Daten vor weniger als 45 Sekunden aktualisiert wurden.
 
 ## Tabellenwertung
 
