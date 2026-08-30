@@ -119,13 +119,13 @@ function MainApp({ session }: { session: Session | null }) {
   useEffect(() => { gamesRef.current = games; }, [games]);
   useEffect(() => {
     if (!session) return;
-    const refreshLiveScores = async () => {
+    const refreshLiveScores = async (force = false) => {
       const now = Date.now();
       const potentialLiveGame = gamesRef.current.some(game => {
         const start = new Date(game.startsAt).getTime();
         return !game.isFinal && start <= now + 10 * 60_000 && start >= now - 5 * 60 * 60_000;
       });
-      if (!potentialLiveGame || liveSyncRunning.current) return;
+      if ((!force && !potentialLiveGame) || liveSyncRunning.current) return;
       liveSyncRunning.current = true;
       try {
         const { error } = await supabase.functions.invoke('sync-deb');
@@ -134,7 +134,8 @@ function MainApp({ session }: { session: Session | null }) {
         liveSyncRunning.current = false;
       }
     };
-    const timer = setInterval(refreshLiveScores, 60_000);
+    refreshLiveScores(true);
+    const timer = setInterval(() => refreshLiveScores(), 60_000);
     return () => clearInterval(timer);
   }, [load, session]);
 
