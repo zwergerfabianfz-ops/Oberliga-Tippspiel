@@ -24,6 +24,8 @@ const cors = {
   'Content-Type': 'application/json',
 };
 
+const PRESEASON_DIVISION_ID = 'deb_ol_fs';
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
@@ -40,30 +42,47 @@ Deno.serve(async req => {
   const { data: season, error: seasonError } = await supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1).single();
   if (seasonError) return json({ error: seasonError.message }, 500);
 
-  const { data: latestGame } = await supabase.from('games').select('updated_at').eq('season_id', season.id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
-  if (latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 45_000) {
+  const [{ data: latestGame }, { count: preseasonCount }] = await Promise.all([
+    supabase.from('games').select('updated_at').eq('season_id', season.id).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('games').select('id', { count: 'exact', head: true }).eq('season_id', season.id).eq('is_preseason', true),
+  ]);
+  if ((preseasonCount ?? 0) > 0 && latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 45_000) {
     return json({ skipped: true, reason: 'recently-synced' });
   }
 
   const apiKey = Deno.env.get('HOCKEYDATA_API_KEY') ?? await discoverPublicApiKey();
   if (!apiKey) return json({ error: 'Kein HockeyData-Key auf der DEB-Seite gefunden.' }, 503);
-  const options = JSON.stringify({ semantic: true, noScorers: true });
-  const endpoint = new URL('https://api.hockeydata.net/data/ebel/Schedule');
-  endpoint.searchParams.set('apiKey', apiKey);
-  endpoint.searchParams.set('referer', 'deb-online.live');
-  endpoint.searchParams.set('lang', 'de');
-  endpoint.searchParams.set('divisionId', season.external_division_id);
-  endpoint.searchParams.set('widgetOptions', options);
-  const response = await fetch(endpoint);
-  const payload = await response.json();
-  if (!response.ok || payload.statusId <= 0) return json({ error: payload.statusMsg ?? 'DEB/HockeyData-Abruf fehlgeschlagen' }, 502);
-
-  const rows: HockeyDataRow[] = payload.data?.rows ?? [];
+  let rows: HockeyDataRow[];
+  let preseasonRows: HockeyDataRow[];
+  try {
+    [rows, preseasonRows] = await Promise.all([
+      fetchSchedule(apiKey, season.external_division_id),
+      fetchSchedule(apiKey, PRESEASON_DIVISION_ID),
+    ]);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : 'DEB/HockeyData-Abruf fehlgeschlagen' }, 502);
+  }
   if (rows.length < 100) return json({ error: `Unvollständiger DEB-Spielplan (${rows.length} Spiele). Import abgebrochen.` }, 502);
-  const externalTeams = new Map<string, { external_id: string; name: string; short_name: string; logo_url: string | null }>();
+  const externalTeams = new Map<string, { external_id: string; name: string; short_name: string; logo_url: string | null; is_competitor: boolean }>();
+  const competitorIdByName = new Map<string, string>();
   for (const row of rows) {
-    externalTeams.set(String(row.homeTeamId), { external_id: String(row.homeTeamId), name: row.homeTeamLongName, short_name: row.homeTeamShortName, logo_url: logoUrl(season.external_division_id, row.homeTeamId) });
-    externalTeams.set(String(row.awayTeamId), { external_id: String(row.awayTeamId), name: row.awayTeamLongName, short_name: row.awayTeamShortName, logo_url: logoUrl(season.external_division_id, row.awayTeamId) });
+    for (const team of rowTeams(row)) {
+      const externalId = String(team.id);
+      const name = canonicalTeamName(team.name);
+      competitorIdByName.set(name, externalId);
+      externalTeams.set(externalId, { external_id: externalId, name, short_name: team.shortName, logo_url: logoUrl(season.external_division_id, team.id), is_competitor: true });
+    }
+  }
+  const relevantPreseasonRows = preseasonRows.filter(row =>
+    competitorIdByName.has(canonicalTeamName(row.homeTeamLongName)) || competitorIdByName.has(canonicalTeamName(row.awayTeamLongName))
+  );
+  for (const row of relevantPreseasonRows) {
+    for (const team of rowTeams(row)) {
+      const name = canonicalTeamName(team.name);
+      if (competitorIdByName.has(name)) continue;
+      const externalId = `preseason:${team.id}`;
+      externalTeams.set(externalId, { external_id: externalId, name, short_name: team.shortName, logo_url: cleanLogoUrl(team.logoUrl) ?? genericLogoUrl(team.id), is_competitor: false });
+    }
   }
   const teams = [...externalTeams.values()].map(team => ({ ...team, season_id: season.id }));
   const { error: teamError } = await supabase.from('teams').upsert(teams, { onConflict: 'season_id,external_id' });
@@ -86,13 +105,47 @@ Deno.serve(async req => {
       away_score: isLive || isFinal ? row.awayTeamScore ?? 0 : null,
       is_live: isLive,
       is_final: isFinal,
+      is_preseason: false,
       updated_at: new Date().toISOString(),
     };
   });
+  const preseasonGames = relevantPreseasonRows.map(row => {
+    const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
+    const isLive = !isFinal && [1, 2].includes(row.gameStatus ?? 0);
+    return {
+      season_id: season.id,
+      external_id: `preseason:${row.id}`,
+      phase: 'regular',
+      matchday: null,
+      starts_at: new Date(row.gameUtcTimestamp).toISOString(),
+      home_team_id: teamIds.get(preseasonTeamExternalId(row.homeTeamLongName, row.homeTeamId, competitorIdByName)),
+      away_team_id: teamIds.get(preseasonTeamExternalId(row.awayTeamLongName, row.awayTeamId, competitorIdByName)),
+      home_score: isLive || isFinal ? row.homeTeamScore ?? 0 : null,
+      away_score: isLive || isFinal ? row.awayTeamScore ?? 0 : null,
+      is_live: isLive,
+      is_final: isFinal,
+      is_preseason: true,
+      updated_at: new Date().toISOString(),
+    };
+  });
+  games.push(...preseasonGames);
   const { error: gameError } = await supabase.from('games').upsert(games, { onConflict: 'season_id,external_id' });
   if (gameError) return json({ error: gameError.message }, 500);
-  return json({ importedGames: games.length, importedTeams: teams.length, liveGames: games.filter(game => game.is_live).length });
+  return json({ importedGames: games.length, importedPreseasonGames: preseasonGames.length, importedTeams: teams.length, liveGames: games.filter(game => game.is_live).length });
 });
+
+async function fetchSchedule(apiKey: string, divisionId: string): Promise<HockeyDataRow[]> {
+  const endpoint = new URL('https://api.hockeydata.net/data/ebel/Schedule');
+  endpoint.searchParams.set('apiKey', apiKey);
+  endpoint.searchParams.set('referer', 'deb-online.live');
+  endpoint.searchParams.set('lang', 'de');
+  endpoint.searchParams.set('divisionId', divisionId);
+  endpoint.searchParams.set('widgetOptions', JSON.stringify({ semantic: true, noScorers: true }));
+  const response = await fetch(endpoint);
+  const payload = await response.json();
+  if (!response.ok || payload.statusId <= 0) throw new Error(payload.statusMsg ?? `Abruf für ${divisionId} fehlgeschlagen`);
+  return payload.data?.rows ?? [];
+}
 
 async function discoverPublicApiKey() {
   const response = await fetch('https://deb-online.live/liga/herren/oberliga-sued/');
@@ -103,4 +156,16 @@ async function discoverPublicApiKey() {
     ?? null;
 }
 function logoUrl(divisionId: string, teamId: string | number) { return `https://api.hockeydata.net/img/icehockey/ebel/team-logos/${divisionId}/${teamId}.png`; }
+function genericLogoUrl(teamId: string | number) { return `https://api.hockeydata.net/img/icehockey/ebel/team-logos/${teamId}.png`; }
+function cleanLogoUrl(value?: string | null) { return value?.replace('api.hockeydata.net//', 'api.hockeydata.net/') ?? null; }
+function canonicalTeamName(name: string) { return name === 'Höchstadter EC' ? 'Höchstadt Alligators' : name; }
+function preseasonTeamExternalId(name: string, id: string | number, competitorIdByName: Map<string, string>) {
+  return competitorIdByName.get(canonicalTeamName(name)) ?? `preseason:${id}`;
+}
+function rowTeams(row: HockeyDataRow) {
+  return [
+    { id: row.homeTeamId, name: row.homeTeamLongName, shortName: row.homeTeamShortName, logoUrl: row.homeTeamLogoUrl },
+    { id: row.awayTeamId, name: row.awayTeamLongName, shortName: row.awayTeamShortName, logoUrl: row.awayTeamLogoUrl },
+  ];
+}
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: cors }); }

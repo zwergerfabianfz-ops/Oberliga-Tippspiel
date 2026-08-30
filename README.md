@@ -5,7 +5,8 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 ## Enthalten
 
 - Registrierung und Anmeldung mit E-Mail/Passwort
-- Tipps für Hauptrunde und Playoffs, serverseitig exakt zum Spielbeginn gesperrt
+- Tipps für Testspiele, Hauptrunde und Playoffs, serverseitig exakt zum Spielbeginn gesperrt
+- Testspieltipps ohne Wertung; Auswahl und Verlauf verschwinden zum Start der Hauptrunde
 - Wertung: exaktes Ergebnis 3, richtige Tordifferenz 2, richtiger Sieger 1, sonst 0 Punkte
 - einmaliger, bis zur Deadline änderbarer Hauptrunden-Tabellentipp
 - getrennte Ranglisten für Spiel- und Tabellentipps
@@ -71,6 +72,8 @@ Für die Erstbefüllung kann der geprüfte SQL-Seed `supabase/migrations/2026082
 Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations/202608300001_live_scores_and_recent_tips.sql` einmal im SQL Editor ausgeführt und die Edge Function `sync-deb` veröffentlicht. Angemeldete App-Nutzer dürfen den Import anstoßen, können dessen Daten aber nicht verändern. Während eines möglichen Live-Spiels fragt die App höchstens einmal pro Minute an; die Funktion überspringt einen Abruf, wenn die Daten vor weniger als 45 Sekunden aktualisiert wurden.
 
 Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt die offizielle HockeyData-Spieltagsnummer. Dadurch umfasst „Nächster Spieltag“ auch Begegnungen desselben Spieltags, die an unterschiedlichen Kalendertagen stattfinden.
+
+Die Migration `supabase/migrations/202608300003_preseason_games.sql` ergänzt Testspiele. Der Import übernimmt aus der offiziellen DEB-Testspiel-Liga nur Partien, an denen mindestens ein Oberliga-Süd-Team beteiligt ist. Diese Tipps werden gespeichert, aber nie für die Rangliste gewertet. Fremde Testspielgegner erscheinen nicht im Hauptrunden-Tabellentipp. Mit dem Beginn des ersten Hauptrundenspiels werden Testspiel-Auswahl und Testspielverlauf automatisch ausgeblendet.
 
 ## Tabellenwertung
 

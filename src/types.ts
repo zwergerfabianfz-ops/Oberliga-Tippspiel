@@ -5,11 +5,11 @@ export type Season = {
   status: 'upcoming' | 'regular' | 'playoffs' | 'finished';
 };
 
-export type Team = { id: string; name: string; shortName: string; logoUrl?: string | null };
+export type Team = { id: string; name: string; shortName: string; logoUrl?: string | null; isCompetitor?: boolean };
 
 export type Game = {
   id: string;
-  phase: 'regular' | 'playoffs';
+  phase: 'preseason' | 'regular' | 'playoffs';
   matchday: number | null;
   startsAt: string;
   homeTeam: Team;

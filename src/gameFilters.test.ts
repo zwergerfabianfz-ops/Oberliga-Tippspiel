@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gamesForNextMatchday } from './gameFilters';
+import { arePreseasonGamesVisible, gamesForNextMatchday } from './gameFilters';
 import type { Game } from './types';
 
 const team = { id: 'team', name: 'Team', shortName: 'TEM' };
@@ -60,5 +60,15 @@ describe('gamesForNextMatchday', () => {
     ];
 
     expect(gamesForNextMatchday(games, new Date('2026-09-19T12:00:00.000Z')).map(item => item.id)).toEqual(['first', 'same-day']);
+  });
+});
+
+describe('arePreseasonGamesVisible', () => {
+  it('shows test games only before the first regular-season game', () => {
+    const preseason = { ...game('test', '2026-09-10T18:00:00.000Z'), phase: 'preseason' as const };
+    const regular = game('season-opener', '2026-09-20T18:00:00.000Z');
+
+    expect(arePreseasonGamesVisible([preseason, regular], new Date('2026-09-19T18:00:00.000Z'))).toBe(true);
+    expect(arePreseasonGamesVisible([preseason, regular], new Date('2026-09-20T18:00:00.000Z'))).toBe(false);
   });
 });

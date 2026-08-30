@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
-import { gamesForNextMatchday } from './src/gameFilters';
+import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { configurePwa } from './src/pwa';
 import { isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
@@ -102,15 +102,16 @@ function MainApp({ session }: { session: Session | null }) {
     const { data: teamRows } = current ? await supabase.from('teams').select('*').eq('season_id', current.id).order('name') : { data: null };
     const teamsById = new Map<string, Team>();
     if (teamRows?.length) {
-      const mapped: Team[] = teamRows.map(t => ({ id: t.id, name: t.name, shortName: t.short_name, logoUrl: t.logo_url }));
+      const mapped: Team[] = teamRows.map(t => ({ id: t.id, name: t.name, shortName: t.short_name, logoUrl: t.logo_url, isCompetitor: t.is_competitor !== false }));
       mapped.forEach(team => teamsById.set(team.id, team));
+      const competitors = mapped.filter(team => team.isCompetitor !== false);
       const { data: savedOrder } = await supabase.from('table_predictions').select('team_id,predicted_position').eq('season_id', current.id).order('predicted_position');
-      const byId = new Map(mapped.map(team => [team.id, team]));
+      const byId = new Map(competitors.map(team => [team.id, team]));
       const ordered = (savedOrder ?? []).flatMap(item => {
         const team = byId.get(item.team_id);
         return team ? [team] : [];
       });
-      setTeams(ordered?.length === mapped.length ? ordered : mapped);
+      setTeams(ordered?.length === competitors.length ? ordered : competitors);
     }
     setGames((gameRows ?? []).map(row => mapGame(row, teamsById)));
     setRefreshing(false);
@@ -157,8 +158,13 @@ function MainApp({ session }: { session: Session | null }) {
 }
 
 function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Dispatch<SetStateAction<Game[]>>; session: Session | null }) {
-  const [phase, setPhase] = useState<'regular' | 'playoffs'>('regular');
+  const [phase, setPhase] = useState<Game['phase']>('regular');
   const [scope, setScope] = useState<'next' | 'all'>('next');
+  const preseasonVisible = arePreseasonGamesVisible(games);
+  const phases: Game['phase'][] = preseasonVisible ? ['regular', 'preseason', 'playoffs'] : ['regular', 'playoffs'];
+  useEffect(() => {
+    if (phase === 'preseason' && !preseasonVisible) setPhase('regular');
+  }, [phase, preseasonVisible]);
   const phaseGames = games.filter(game => game.phase === phase);
   const shown = scope === 'next' ? gamesForNextMatchday(phaseGames) : phaseGames;
   const shownMatchday = scope === 'next' ? shown[0]?.matchday : null;
@@ -173,12 +179,14 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
     setGames(current => current.map(item => item.id === game.id ? { ...item, predictedHome: h, predictedAway: a } : item));
     return true;
   }, [session, setGames]);
+  const nextPhase = () => setPhase(current => phases[(phases.indexOf(current) + 1) % phases.length] ?? 'regular');
+  const phaseLabel = phase === 'regular' ? 'Hauptrunde' : phase === 'preseason' ? 'Testspiele' : 'Playoffs';
   return <>
     <View style={styles.filterRow}>
-      <FilterButton label="Phase" value={phase === 'regular' ? 'Hauptrunde' : 'Playoffs'} onPress={() => setPhase(current => current === 'regular' ? 'playoffs' : 'regular')} />
+      <FilterButton label="Phase" value={phaseLabel} onPress={nextPhase} />
       <FilterButton label="Anzeige" value={scope === 'next' ? 'Nächster Spieltag' : 'Alle Spiele'} onPress={() => setScope(current => current === 'next' ? 'all' : 'next')} />
     </View>
-    <Text style={styles.sectionHint}>{scope === 'next' ? shownMatchday ? `Kompletter ${shownMatchday}. Spieltag. ` : 'Alle Spiele des nächsten anstehenden Spieltags. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
+    <Text style={styles.sectionHint}>{phase === 'preseason' ? 'Testspiele dienen nur zum Ausprobieren und zählen nicht für die Rangliste. ' : ''}{scope === 'next' ? shownMatchday ? `Kompletter ${shownMatchday}. Spieltag. ` : 'Alle Spiele des nächsten anstehenden Spieltags. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
     {shown.map(game => <GameCard key={game.id} game={game} onSave={save} />)}
     {!shown.length && <Empty text={scope === 'next' ? 'Kein weiterer Spieltag in dieser Phase.' : 'Noch keine Spiele in dieser Phase.'} />}
   </>;
@@ -216,7 +224,7 @@ function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a
   return <View style={styles.card}>
     <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, !open && styles.closed, game.isLive && styles.live]}>{gameState}</Text></View>
     <View style={styles.matchRow}><TeamBlock team={game.homeTeam} /><View style={styles.scoreInputs}><ScoreInput value={home} onChange={setHome} disabled={!open} /><Text style={styles.colon}>:</Text><ScoreInput value={away} onChange={setAway} disabled={!open} /></View><TeamBlock team={game.awayTeam} /></View>
-    {game.homeScore !== null && <Text style={[styles.result, game.isLive && styles.liveText]}>{game.isLive ? 'Live' : 'Endstand'} {game.homeScore}:{game.awayScore}{game.isFinal ? ` · ${game.points ?? 0} Punkte` : ''}</Text>}
+    {game.homeScore !== null && <Text style={[styles.result, game.isLive && styles.liveText]}>{game.isLive ? 'Live' : 'Endstand'} {game.homeScore}:{game.awayScore}{game.isFinal ? game.phase === 'preseason' ? ' · ohne Wertung' : ` · ${game.points ?? 0} Punkte` : ''}</Text>}
     {open && saveState !== 'idle' && <Text style={[styles.saveStatus, saveState === 'error' && styles.saveError]}>{saveState === 'saved' ? '✓ Gespeichert' : saveState === 'error' ? 'Nicht gespeichert' : saveState === 'saving' ? 'Speichert …' : 'Wird gespeichert …'}</Text>}
   </View>;
 }
@@ -239,7 +247,7 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
           <Text style={[styles.historyScore, game.isLive && styles.liveText]}>{game.homeScore === null ? '– : –' : `${game.homeScore} : ${game.awayScore}`}</Text>
           <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
         </View>
-        <View style={styles.tipList}>{tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}><Text style={styles.tipName}>{tip.displayName}</Text><Text style={styles.tipValue}>{tip.predictedHome}:{tip.predictedAway}</Text>{game.isFinal && <Text style={styles.tipPoints}>{tip.points ?? 0} P</Text>}</View>)}</View>
+        <View style={styles.tipList}>{tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}><Text style={styles.tipName}>{tip.displayName}</Text><Text style={styles.tipValue}>{tip.predictedHome}:{tip.predictedAway}</Text>{game.isFinal && tip.points !== null && <Text style={styles.tipPoints}>{tip.points} P</Text>}</View>)}</View>
       </View>;
     })}
     {!games.size && <Empty text="In den letzten 14 Tagen gibt es noch keine sichtbaren Tipps." />}
@@ -304,7 +312,7 @@ function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndi
 function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippverlauf', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
-function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
