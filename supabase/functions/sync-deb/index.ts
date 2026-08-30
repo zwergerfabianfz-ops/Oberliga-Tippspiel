@@ -4,7 +4,7 @@ type HockeyDataRow = {
   id: string;
   gameUtcTimestamp: number;
   gameDay?: number | null;
-  gameRound?: number | null;
+  gameName?: string | null;
   homeTeamId: number | string;
   homeTeamLongName: string;
   homeTeamShortName: string;
@@ -98,7 +98,7 @@ Deno.serve(async req => {
       season_id: season.id,
       external_id: row.id,
       phase: season.playoffs_start_at && row.gameUtcTimestamp >= new Date(season.playoffs_start_at).getTime() ? 'playoffs' : 'regular',
-      matchday: row.gameRound ?? row.gameDay ?? null,
+      matchday: officialMatchday(row),
       starts_at: new Date(row.gameUtcTimestamp).toISOString(),
       home_team_id: teamIds.get(String(row.homeTeamId)),
       away_team_id: teamIds.get(String(row.awayTeamId)),
@@ -160,6 +160,10 @@ function logoUrl(divisionId: string, teamId: string | number) { return `https://
 function genericLogoUrl(teamId: string | number) { return `https://api.hockeydata.net/img/icehockey/ebel/team-logos/${teamId}.png`; }
 function cleanLogoUrl(value?: string | null) { return value?.replace('api.hockeydata.net//', 'api.hockeydata.net/') ?? null; }
 function canonicalTeamName(name: string) { return name === 'Höchstadter EC' ? 'Höchstadt Alligators' : name; }
+function officialMatchday(row: HockeyDataRow) {
+  const gameNumber = Number(row.gameName?.match(/_(\d+)$/)?.[1]);
+  return Number.isInteger(gameNumber) && gameNumber > 0 ? Math.ceil(gameNumber / 7) : row.gameDay ?? null;
+}
 function preseasonTeamExternalId(name: string, id: string | number, competitorIdByName: Map<string, string>) {
   return competitorIdByName.get(canonicalTeamName(name)) ?? `preseason:${id}`;
 }
