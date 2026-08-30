@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -329,6 +330,11 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
       <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn – aber nur, wenn dein Tipp für dieses Spiel noch fehlt.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
       {pushSupported && <Button label={pushBusy ? 'Bitte warten …' : pushEnabled ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten'} onPress={togglePush} disabled={pushBusy} />}
     </View>}
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>WhatsApp-Gruppe</Text>
+      <Text style={styles.muted}>Tritt der WhatsApp-Gruppe zum Oberliga-Tippspiel bei.</Text>
+      <Button label="WhatsApp-Gruppe beitreten" onPress={() => Linking.openURL('https://chat.whatsapp.com/HSCLswdwhKj3uaVcVAlhMH?s=sh&p=a&mlu=0')} />
+    </View>
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Impressum</Text>
       <Text style={styles.legalText}>Angaben gemäß § 5 DDG</Text>
