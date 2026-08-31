@@ -211,9 +211,10 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   useEffect(() => {
     if (phase === 'preseason' && !preseasonVisible) setPhase('regular');
   }, [phase, preseasonVisible]);
+  const liveGames = games.filter(game => game.isLive).sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   const phaseGames = games.filter(game => game.phase === phase);
   const shown = scope === 'next' ? gamesForNextMatchday(phaseGames) : phaseGames;
-  const shownMatchday = scope === 'next' ? shown[0]?.matchday : null;
+  const shownTips = shown.filter(game => !game.isLive);
   const save = useCallback(async (game: Game, home: string, away: string): Promise<boolean> => {
     const h = Number(home), a = Number(away);
     if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return false;
@@ -228,14 +229,30 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   const nextPhase = () => setPhase(current => phases[(phases.indexOf(current) + 1) % phases.length] ?? 'regular');
   const phaseLabel = phase === 'regular' ? 'Hauptrunde' : phase === 'preseason' ? 'Testspiele' : 'Playoffs';
   return <>
+    {liveGames.length > 0 && <View style={styles.liveSection}>
+      <Text style={styles.liveSectionTitle}>● LIVE-SPIELE</Text>
+      {liveGames.map(game => <LiveGameCard key={game.id} game={game} />)}
+    </View>}
     <View style={styles.filterRow}>
       <FilterButton label="Phase" value={phaseLabel} onPress={nextPhase} />
       <FilterButton label="Anzeige" value={scope === 'next' ? 'Nächster Spieltag' : 'Alle Spiele'} onPress={() => setScope(current => current === 'next' ? 'all' : 'next')} />
     </View>
-    <Text style={styles.sectionHint}>{phase === 'preseason' ? 'Testspiele dienen nur zum Ausprobieren und zählen nicht für die Rangliste. ' : ''}{scope === 'next' ? shownMatchday ? `Kompletter ${shownMatchday}. Spieltag. ` : 'Alle Spiele des nächsten anstehenden Spieltags. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
-    {shown.map(game => <GameCard key={game.id} game={game} onSave={save} />)}
-    {!shown.length && <Empty text={scope === 'next' ? 'Kein weiterer Spieltag in dieser Phase.' : 'Noch keine Spiele in dieser Phase.'} />}
+    <Text style={styles.sectionHint}>{phase === 'preseason' ? 'Testspiele dienen nur zum Ausprobieren und zählen nicht für die Rangliste. ' : ''}{scope === 'next' ? 'Spiele des nächsten Spieltags. Ein einzelnes vorgezogenes Spiel wird zusammen mit dem folgenden Spieltermin angezeigt. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
+    {shownTips.map(game => <GameCard key={game.id} game={game} onSave={save} />)}
+    {!shownTips.length && !liveGames.length && <Empty text={scope === 'next' ? 'Kein weiterer Spieltag in dieser Phase.' : 'Noch keine Spiele in dieser Phase.'} />}
   </>;
+}
+
+function LiveGameCard({ game }: { game: Game }) {
+  const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
+  return <View style={[styles.card, styles.liveCard]}>
+    <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.live]}>LIVE</Text></View>
+    <View style={[styles.historyMatch, styles.liveMatch]}>
+      <View style={styles.historyTeam}><TeamLogo team={game.homeTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.homeTeam.name}</Text></View>
+      <View style={styles.liveScoreBlock}><Text style={styles.liveScore}>{game.homeScore ?? 0} : {game.awayScore ?? 0}</Text><Text style={styles.liveScoreLabel}>AKTUELLER STAND</Text></View>
+      <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
+    </View>
+  </View>;
 }
 
 function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => Promise<boolean> }) {
@@ -276,6 +293,7 @@ function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a
 }
 
 function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] }) {
+  const [openGameId, setOpenGameId] = useState<string | null>(null);
   const games = new Map<string, { game: RecentPrediction; tips: RecentPrediction[] }>();
   for (const prediction of predictions) {
     const entry = games.get(prediction.gameId) ?? { game: prediction, tips: [] };
@@ -286,6 +304,7 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
     <Text style={styles.sectionHint}>Hier siehst du die Tipps aller Mitspieler aus den letzten 14 Tagen. Sie werden erst nach dem jeweiligen Spielbeginn sichtbar.</Text>
     {[...games.values()].map(({ game, tips }) => {
       const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
+      const tipsOpen = openGameId === game.gameId;
       return <View key={game.gameId} style={styles.card}>
         <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.closed, game.isLive && styles.live]}>{game.isLive ? 'LIVE' : game.isFinal ? 'BEENDET' : 'GESTARTET'}</Text></View>
         <View style={styles.historyMatch}>
@@ -293,14 +312,17 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
           <Text style={[styles.historyScore, styles.historyScoreAligned, game.isLive && styles.liveText]}>{game.homeScore === null ? '– : –' : `${game.homeScore} : ${game.awayScore}`}</Text>
           <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
         </View>
-        <View style={styles.tipList}>
+        <Pressable style={styles.historyToggle} onPress={() => setOpenGameId(current => current === game.gameId ? null : game.gameId)} accessibilityRole="button" accessibilityState={{ expanded: tipsOpen }}>
+          <Text style={styles.historyToggleText}>{tipsOpen ? 'Tipps ausblenden' : `${tips.length} ${tips.length === 1 ? 'Tipp' : 'Tipps'} anzeigen`}</Text><Text style={styles.historyToggleArrow}>{tipsOpen ? '▲' : '▼'}</Text>
+        </Pressable>
+        {tipsOpen && <View style={styles.tipList}>
           <View style={styles.tipHeader}><Text style={styles.tipHeaderName}>SPIELER</Text><Text style={styles.tipHeaderValue}>TIPP</Text><Text style={styles.tipHeaderPoints}>PUNKTE</Text></View>
           {tips.map((tip, index) => <View key={`${tip.gameId}-${tip.displayName}-${index}`} style={styles.tipRow}>
             <View style={styles.tipNameColumn}><Text numberOfLines={1} style={styles.tipName}>{tip.displayName}</Text></View>
             <View style={styles.tipValueColumn}><Text style={styles.tipValue}>{tip.predictedHome}:{tip.predictedAway}</Text></View>
             <View style={styles.tipPointsColumn}><Text style={styles.tipPoints}>{game.isFinal && tip.points !== null ? `${tip.points} P` : '–'}</Text></View>
           </View>)}
-        </View>
+        </View>}
       </View>;
     })}
     {!games.size && <Empty text="In den letzten 14 Tagen gibt es noch keine sichtbaren Tipps." />}
@@ -422,4 +444,14 @@ const styles = StyleSheet.create({
   tipNameColumn: { width: '34%' },
   tipValueColumn: { width: '32%', alignItems: 'center' },
   tipPointsColumn: { width: '34%', alignItems: 'flex-end' },
+  historyToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderTopWidth: 1, borderTopColor: c.line, paddingVertical: 11, marginTop: 2 },
+  historyToggleText: { color: c.lime, fontSize: 12, fontWeight: '800' },
+  historyToggleArrow: { color: c.lime, fontSize: 11, fontWeight: '900' },
+  liveSection: { marginBottom: 6 },
+  liveSectionTitle: { color: '#ff5a52', fontSize: 12, fontWeight: '900', letterSpacing: 1.2, marginBottom: 10 },
+  liveCard: { borderColor: '#7a3138', backgroundColor: '#13223a' },
+  liveMatch: { marginBottom: 0 },
+  liveScoreBlock: { width: '32%', alignItems: 'center' },
+  liveScore: { color: '#ff5a52', fontSize: 25, fontWeight: '900', textAlign: 'center' },
+  liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
 });

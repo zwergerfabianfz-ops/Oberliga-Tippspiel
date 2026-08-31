@@ -14,16 +14,23 @@ export function arePreseasonGamesVisible(games: Game[], now = new Date()): boole
 
 export function gamesForNextMatchday(games: Game[], now = new Date()): Game[] {
   const cutoff = now.getTime() - LIVE_WINDOW_MS;
-  const nextGame = games
+  const relevantGames = games
     .filter(game => !game.isFinal && new Date(game.startsAt).getTime() >= cutoff)
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())[0];
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const nextGame = relevantGames[0];
 
   if (!nextGame) return [];
-  if (nextGame.matchday !== null) {
-    return games.filter(game => game.matchday === nextGame.matchday);
-  }
   const targetDay = berlinDay(nextGame.startsAt);
-  return games.filter(game => berlinDay(game.startsAt) === targetDay);
+  const firstDayGames = games.filter(game => berlinDay(game.startsAt) === targetDay);
+  if (firstDayGames.length !== 1) return firstDayGames;
+
+  const followingGame = relevantGames.find(game => berlinDay(game.startsAt) !== targetDay);
+  if (!followingGame) return firstDayGames;
+  const followingDay = berlinDay(followingGame.startsAt);
+  return games.filter(game => {
+    const day = berlinDay(game.startsAt);
+    return day === targetDay || day === followingDay;
+  });
 }
 
 function berlinDay(value: string): string {

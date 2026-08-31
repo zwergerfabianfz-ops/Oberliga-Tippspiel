@@ -23,14 +23,32 @@ function game(id: string, startsAt: string, isFinal = false, matchday: number | 
 }
 
 describe('gamesForNextMatchday', () => {
-  it('returns the complete official matchday even when games are on different dates', () => {
+  it('adds the following game date when the first date only contains a single game', () => {
     const games = [
       game('later-round', '2026-09-25T17:30:00.000Z', false, 5),
       game('thursday', '2026-09-17T17:30:00.000Z', false, 1),
-      game('friday', '2026-09-18T18:00:00.000Z', false, 1),
+      ...Array.from({ length: 6 }, (_, index) => game(`friday-${index + 1}`, `2026-09-18T${String(12 + index).padStart(2, '0')}:00:00.000Z`, false, 1)),
     ];
 
-    expect(gamesForNextMatchday(games, new Date('2026-09-16T12:00:00.000Z')).map(item => item.id)).toEqual(['thursday', 'friday']);
+    expect(gamesForNextMatchday(games, new Date('2026-09-16T12:00:00.000Z')).map(item => item.id)).toEqual([
+      'thursday',
+      'friday-1',
+      'friday-2',
+      'friday-3',
+      'friday-4',
+      'friday-5',
+      'friday-6',
+    ]);
+  });
+
+  it('does not rely on incorrect matchday metadata', () => {
+    const games = [
+      game('first-day-1', '2026-09-20T13:00:00.000Z', false, 1),
+      game('first-day-2', '2026-09-20T18:00:00.000Z', false, 1),
+      game('later', '2026-09-27T18:00:00.000Z', false, 1),
+    ];
+
+    expect(gamesForNextMatchday(games, new Date('2026-09-19T12:00:00.000Z')).map(item => item.id)).toEqual(['first-day-1', 'first-day-2']);
   });
 
   it('keeps completed games from the current matchday visible', () => {
@@ -52,7 +70,7 @@ describe('gamesForNextMatchday', () => {
     expect(gamesForNextMatchday(games, new Date('2026-09-19T12:00:00.000Z')).map(item => item.id)).toEqual(['next']);
   });
 
-  it('falls back to the calendar day until matchday data has been imported', () => {
+  it('uses the next calendar day when it contains multiple games', () => {
     const games = [
       game('first', '2026-09-20T13:00:00.000Z'),
       game('same-day', '2026-09-20T18:00:00.000Z'),
