@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
+import { parseAuthCallback } from './src/authCallback';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
@@ -23,24 +24,58 @@ import { isBackendConfigured, supabase } from './src/supabase';
 import type { Game, LeaderboardEntry, RecentPrediction, Season, Team } from './src/types';
 
 type Tab = 'spiele' | 'verlauf' | 'tabelle' | 'rangliste' | 'profil';
+type AuthNotice = { kind: 'success' | 'error'; message: string };
 
 const demoSeason: Season = { id: 'demo', name: 'Oberliga Süd 2026/27', tablePredictionDeadline: '2026-09-17T21:59:59.000Z', status: 'upcoming' };
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null);
 
   useEffect(() => {
     configurePwa();
     if (!isBackendConfigured) { setLoading(false); return; }
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false); });
     const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    async function initializeAuth() {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const callback = parseAuthCallback(window.location.href);
+        if (callback) {
+          if (callback.kind === 'error') {
+            setAuthNotice({ kind: 'error', message: callback.errorCode === 'otp_expired' ? 'Der Bestätigungslink ist abgelaufen oder wurde bereits verwendet.' : 'Die E-Mail-Adresse konnte nicht bestätigt werden.' });
+          } else {
+            let confirmationError = null;
+            if (callback.code) ({ error: confirmationError } = await supabase.auth.exchangeCodeForSession(callback.code));
+            else if (callback.accessToken && callback.refreshToken) ({ error: confirmationError } = await supabase.auth.setSession({ access_token: callback.accessToken, refresh_token: callback.refreshToken }));
+            setAuthNotice(confirmationError
+              ? { kind: 'error', message: 'Der Bestätigungslink konnte nicht verarbeitet werden. Versuche dich bitte anzumelden.' }
+              : { kind: 'success', message: 'Deine E-Mail-Adresse wurde bestätigt. Dein Konto ist jetzt einsatzbereit.' });
+          }
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+      const { data: current } = await supabase.auth.getSession();
+      setSession(current.session);
+      setLoading(false);
+    }
+    initializeAuth();
     return () => data.subscription.unsubscribe();
   }, []);
 
   if (loading) return <ScreenLoader />;
+  if (authNotice) return <AuthConfirmationScreen notice={authNotice} signedIn={Boolean(session)} onContinue={() => setAuthNotice(null)} />;
   if (!session && isBackendConfigured) return <AuthScreen />;
   return <MainApp session={session} />;
+}
+
+function AuthConfirmationScreen({ notice, signedIn, onContinue }: { notice: AuthNotice; signedIn: boolean; onContinue: () => void }) {
+  return <SafeAreaView style={styles.safe}><View style={styles.authWrap}>
+    <Text style={styles.brand}>{notice.kind === 'success' ? '✓ BESTÄTIGT' : 'LINK NICHT GÜLTIG'}</Text>
+    <Text style={styles.authTitle}>{notice.kind === 'success' ? 'Willkommen beim Tippspiel!' : 'Bestätigung fehlgeschlagen'}</Text>
+    <Text style={styles.muted}>{notice.message}</Text>
+    <Button label={notice.kind === 'success' && signedIn ? 'Tippspiel öffnen' : 'Zur Anmeldung'} onPress={onContinue} />
+    {Platform.OS === 'web' && <Pressable onPress={() => openLegalPage('/quickstart.html')}><Text style={styles.link}>Installation & Quickstart</Text></Pressable>}
+  </View></SafeAreaView>;
 }
 
 function AuthScreen() {
@@ -57,7 +92,7 @@ function AuthScreen() {
     setBusy(true);
     const result = mode === 'login'
       ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
-      : await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: name.trim() } } });
+      : await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: name.trim() }, emailRedirectTo: confirmationRedirectUrl() } });
     setBusy(false);
     if (result.error) Alert.alert('Anmeldung fehlgeschlagen', result.error.message);
     else if (mode === 'register' && !result.data.session) Alert.alert('Fast geschafft', 'Bitte bestätige deine E-Mail-Adresse.');
@@ -368,6 +403,7 @@ function Empty({ text }: { text: string }) { return <View style={styles.empty}><
 function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndicator style={{ flex: 1 }} color="#b8f341" /></SafeAreaView>; }
 function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippverlauf', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
+function confirmationRedirectUrl() { return Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined; }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
 function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
