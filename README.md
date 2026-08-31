@@ -5,6 +5,7 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 ## Enthalten
 
 - Registrierung und Anmeldung mit E-Mail/Passwort
+- eindeutiger, im Profil änderbarer Anzeigename
 - Tipps für Testspiele, Hauptrunde und Playoffs, serverseitig exakt zum Spielbeginn gesperrt
 - Testspieltipps ohne Wertung; Auswahl und Verlauf verschwinden zum Start der Hauptrunde
 - Wertung: exaktes Ergebnis 3, richtige Tordifferenz 2, richtiger Sieger 1, sonst 0 Punkte
@@ -77,6 +78,8 @@ Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt
 Die Migration `supabase/migrations/202608300003_preseason_games.sql` ergänzt Testspiele. Der Import übernimmt aus der offiziellen DEB-Testspiel-Liga nur Partien, an denen mindestens ein Oberliga-Süd-Team beteiligt ist. Diese Tipps werden gespeichert, aber nie für die Rangliste gewertet. Fremde Testspielgegner erscheinen nicht im Hauptrunden-Tabellentipp. Mit dem Beginn des ersten Hauptrundenspiels werden Testspiel-Auswahl und Testspielverlauf automatisch ausgeblendet.
 
 `supabase/migrations/202608300005_fix_table_prediction_teams.sql` bereinigt die Kennzeichnung eventuell älterer Testgegner und validiert den Tabellentipp ausschließlich gegen die Mannschaften, die tatsächlich an der Hauptrunde teilnehmen.
+
+`supabase/migrations/202608310001_unique_display_names.sql` macht Anzeigenamen unabhängig von Groß-/Kleinschreibung eindeutig. Die App prüft neue Namen bereits vor der Registrierung; die Datenbank verhindert zusätzlich konkurrierende Doppelvergaben. Angemeldete Nutzer können ihren Anzeigenamen im Profil ändern.
 
 ## Tipp-Erinnerungen
 

@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { parseAuthCallback } from './src/authCallback';
+import { displayNameValidationError, normalizeDisplayName } from './src/displayNames';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
@@ -86,13 +87,23 @@ function AuthScreen() {
   const [busy, setBusy] = useState(false);
 
   async function submit() {
-    if (!email.trim() || password.length < 8 || (mode === 'register' && !name.trim())) {
-      Alert.alert('Eingaben prüfen', 'Bitte gib eine E-Mail, einen Namen und mindestens 8 Zeichen als Passwort ein.'); return;
+    const normalizedName = normalizeDisplayName(name);
+    const nameError = mode === 'register' ? displayNameValidationError(normalizedName) : null;
+    if (!email.trim() || password.length < 8 || nameError) {
+      Alert.alert('Eingaben prüfen', nameError ?? 'Bitte gib eine gültige E-Mail-Adresse und mindestens 8 Zeichen als Passwort ein.'); return;
     }
     setBusy(true);
+    if (mode === 'register') {
+      const { data: available, error } = await supabase.rpc('is_display_name_available', { p_display_name: normalizedName });
+      if ((error && !isMissingRpcError(error.code)) || available === false) {
+        setBusy(false);
+        Alert.alert(error ? 'Prüfung nicht möglich' : 'Name bereits vergeben', error ? 'Der Anzeigename konnte gerade nicht geprüft werden. Bitte versuche es erneut.' : 'Bitte wähle einen anderen Anzeigenamen.');
+        return;
+      }
+    }
     const result = mode === 'login'
       ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
-      : await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: name.trim() }, emailRedirectTo: confirmationRedirectUrl() } });
+      : await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: normalizedName }, emailRedirectTo: confirmationRedirectUrl() } });
     setBusy(false);
     if (result.error) Alert.alert('Anmeldung fehlgeschlagen', result.error.message);
     else if (mode === 'register' && !result.data.session) Alert.alert('Fast geschafft', 'Bitte bestätige deine E-Mail-Adresse.');
@@ -360,9 +371,34 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
   const pushSupported = pushNotificationsSupported();
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+  const [displayName, setDisplayName] = useState(() => String(session?.user.user_metadata?.display_name ?? ''));
+  const [nameBusy, setNameBusy] = useState(false);
   useEffect(() => {
     if (pushSupported) pushNotificationsEnabled().then(setPushEnabled).catch(() => setPushEnabled(false));
   }, [pushSupported]);
+  useEffect(() => {
+    if (!session) return;
+    supabase.from('profiles').select('display_name').eq('id', session.user.id).single()
+      .then(({ data }) => { if (data?.display_name) setDisplayName(data.display_name); });
+  }, [session]);
+  async function saveDisplayName() {
+    if (!session || nameBusy) return;
+    const normalizedName = normalizeDisplayName(displayName);
+    const validationError = displayNameValidationError(normalizedName);
+    if (validationError) { Alert.alert('Name nicht gespeichert', validationError); return; }
+    setNameBusy(true);
+    const { data, error } = await supabase.rpc('update_my_display_name', { p_display_name: normalizedName });
+    if (error) {
+      Alert.alert('Name nicht gespeichert', error.code === '23505' || error.message.includes('bereits vergeben') ? 'Dieser Anzeigename ist bereits vergeben.' : error.message);
+    } else {
+      const savedName = String(data ?? normalizedName);
+      setDisplayName(savedName);
+      await supabase.auth.updateUser({ data: { display_name: savedName } });
+      onRefresh();
+      Alert.alert('Gespeichert', 'Dein Anzeigename wurde geändert.');
+    }
+    setNameBusy(false);
+  }
   async function togglePush() {
     if (!session || pushBusy) return;
     setPushBusy(true);
@@ -381,7 +417,7 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
     await supabase.auth.signOut();
   }
   return <>
-    <View style={styles.card}><Text style={styles.cardTitle}>Mein Konto</Text><Text style={styles.muted}>{session?.user.email ?? 'Demo-Spieler'}</Text><View style={styles.spacer} /><Button label="Daten aktualisieren" onPress={onRefresh} />{session && <Pressable onPress={signOut}><Text style={styles.danger}>Abmelden</Text></Pressable>}</View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Mein Konto</Text><Text style={styles.muted}>{session?.user.email ?? 'Demo-Spieler'}</Text>{session && <><Field label="Anzeigename" value={displayName} onChangeText={setDisplayName} maxLength={30} /><Text style={styles.profileHint}>Der Anzeigename ist eindeutig und erscheint in Rangliste und Tippverlauf.</Text><Button label={nameBusy ? 'Bitte warten …' : 'Anzeigename speichern'} onPress={saveDisplayName} disabled={nameBusy} /></>}<View style={styles.spacer} /><Button label="Daten aktualisieren" onPress={onRefresh} />{session && <Pressable onPress={signOut}><Text style={styles.danger}>Abmelden</Text></Pressable>}</View>
     {Platform.OS === 'web' && <View style={styles.card}>
       <Text style={styles.cardTitle}>Tipp-Erinnerung</Text>
       <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn – aber nur, wenn dein Tipp für dieses Spiel noch fehlt.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
@@ -426,6 +462,7 @@ function ScreenLoader() { return <SafeAreaView style={styles.safe}><ActivityIndi
 function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippverlauf', tabelle: 'Saisontabelle', rangliste: 'Ranglisten', profil: 'Profil' } as const)[tab]; }
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
 function confirmationRedirectUrl() { return Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined; }
+function isMissingRpcError(code?: string) { return code === 'PGRST202' || code === '42883'; }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
 function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
@@ -454,4 +491,5 @@ const styles = StyleSheet.create({
   liveScoreBlock: { width: '32%', alignItems: 'center' },
   liveScore: { color: '#ff5a52', fontSize: 25, fontWeight: '900', textAlign: 'center' },
   liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
+  profileHint: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 7 },
 });
