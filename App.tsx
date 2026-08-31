@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { parseAuthCallback } from './src/authCallback';
+import { authErrorMessage, withAuthTimeout } from './src/authErrors';
 import { displayNameValidationError, normalizeDisplayName } from './src/displayNames';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
@@ -85,28 +86,56 @@ function AuthScreen() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
 
   async function submit() {
+    if (busy) return;
     const normalizedName = normalizeDisplayName(name);
     const nameError = mode === 'register' ? displayNameValidationError(normalizedName) : null;
     if (!email.trim() || password.length < 8 || nameError) {
-      Alert.alert('Eingaben prüfen', nameError ?? 'Bitte gib eine gültige E-Mail-Adresse und mindestens 8 Zeichen als Passwort ein.'); return;
+      const text = nameError ?? 'Bitte gib eine gültige E-Mail-Adresse und mindestens 8 Zeichen als Passwort ein.';
+      setFeedback({ kind: 'error', text });
+      Alert.alert('Eingaben prüfen', text);
+      return;
     }
     setBusy(true);
-    if (mode === 'register') {
-      const { data: available, error } = await supabase.rpc('is_display_name_available', { p_display_name: normalizedName });
-      if ((error && !isMissingRpcError(error.code)) || available === false) {
-        setBusy(false);
-        Alert.alert(error ? 'Prüfung nicht möglich' : 'Name bereits vergeben', error ? 'Der Anzeigename konnte gerade nicht geprüft werden. Bitte versuche es erneut.' : 'Bitte wähle einen anderen Anzeigenamen.');
-        return;
+    setFeedback(null);
+    try {
+      if (mode === 'register') {
+        const { data: available, error } = await withAuthTimeout(supabase.rpc('is_display_name_available', { p_display_name: normalizedName }));
+        if ((error && !isMissingRpcError(error.code)) || available === false) {
+          const text = error ? 'Der Anzeigename konnte gerade nicht geprüft werden. Bitte versuche es erneut.' : 'Dieser Anzeigename ist bereits vergeben. Bitte wähle einen anderen.';
+          setFeedback({ kind: 'error', text });
+          Alert.alert(error ? 'Prüfung nicht möglich' : 'Name bereits vergeben', text);
+          return;
+        }
       }
+      const normalizedEmail = email.trim().toLowerCase();
+      const result = mode === 'login'
+        ? await withAuthTimeout(supabase.auth.signInWithPassword({ email: normalizedEmail, password }))
+        : await withAuthTimeout(supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { display_name: normalizedName }, emailRedirectTo: confirmationRedirectUrl() } }));
+      if (result.error) {
+        const text = authErrorMessage(result.error);
+        setFeedback({ kind: 'error', text });
+        Alert.alert('Anmeldung fehlgeschlagen', text);
+      } else if (mode === 'register' && !result.data.session) {
+        const text = 'Bitte bestätige deine E-Mail-Adresse. Danach kannst du dich anmelden.';
+        setFeedback({ kind: 'success', text });
+        Alert.alert('Fast geschafft', text);
+      } else if (mode === 'login' && !result.data.session) {
+        const text = 'Die Anmeldung wurde nicht abgeschlossen. Bitte bestätige deine E-Mail-Adresse oder versuche es erneut.';
+        setFeedback({ kind: 'error', text });
+        Alert.alert('Anmeldung nicht abgeschlossen', text);
+      }
+    } catch (error) {
+      const text = error instanceof Error && error.message === 'Zeitüberschreitung'
+        ? 'Der Anmeldedienst antwortet gerade nicht. Bitte prüfe die Internetverbindung und versuche es erneut.'
+        : 'Beim Anmelden ist ein technischer Fehler aufgetreten. Bitte versuche es erneut.';
+      setFeedback({ kind: 'error', text });
+      Alert.alert('Anmeldung fehlgeschlagen', text);
+    } finally {
+      setBusy(false);
     }
-    const result = mode === 'login'
-      ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
-      : await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: normalizedName }, emailRedirectTo: confirmationRedirectUrl() } });
-    setBusy(false);
-    if (result.error) Alert.alert('Anmeldung fehlgeschlagen', result.error.message);
-    else if (mode === 'register' && !result.data.session) Alert.alert('Fast geschafft', 'Bitte bestätige deine E-Mail-Adresse.');
   }
 
   return <SafeAreaView style={styles.safe}><View style={styles.authWrap}>
@@ -116,7 +145,8 @@ function AuthScreen() {
     <Field label="E-Mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
     <Field label="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
     <Button label={busy ? 'Bitte warten …' : mode === 'login' ? 'Einloggen' : 'Konto erstellen'} onPress={submit} disabled={busy} />
-    <Pressable onPress={() => setMode(mode === 'login' ? 'register' : 'login')}><Text style={styles.link}>{mode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon registriert? Einloggen'}</Text></Pressable>
+    {feedback && <Text accessibilityRole="alert" style={[styles.authFeedback, feedback.kind === 'error' ? styles.authFeedbackError : styles.authFeedbackSuccess]}>{feedback.text}</Text>}
+    <Pressable onPress={() => { setMode(mode === 'login' ? 'register' : 'login'); setFeedback(null); }}><Text style={styles.link}>{mode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon registriert? Einloggen'}</Text></Pressable>
     {Platform.OS === 'web' && <><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/quickstart.html')}><Text style={styles.legalLink}>Installation & Quickstart</Text></Pressable></View><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/datenschutz.html')}><Text style={styles.legalLink}>Datenschutz</Text></Pressable><Text style={styles.muted}>·</Text><Pressable onPress={() => openLegalPage('/impressum.html')}><Text style={styles.legalLink}>Impressum</Text></Pressable></View></>}
   </View></SafeAreaView>;
 }
@@ -492,4 +522,7 @@ const styles = StyleSheet.create({
   liveScore: { color: '#ff5a52', fontSize: 25, fontWeight: '900', textAlign: 'center' },
   liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
   profileHint: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 7 },
+  authFeedback: { marginTop: 13, padding: 11, borderRadius: 9, fontSize: 13, fontWeight: '700', lineHeight: 18 },
+  authFeedbackError: { color: '#ffd4d4', backgroundColor: '#421c27' },
+  authFeedbackSuccess: { color: c.lime, backgroundColor: '#183220' },
 });
