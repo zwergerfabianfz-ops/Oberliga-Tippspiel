@@ -71,7 +71,7 @@ function AuthScreen() {
     <Field label="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
     <Button label={busy ? 'Bitte warten …' : mode === 'login' ? 'Einloggen' : 'Konto erstellen'} onPress={submit} disabled={busy} />
     <Pressable onPress={() => setMode(mode === 'login' ? 'register' : 'login')}><Text style={styles.link}>{mode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon registriert? Einloggen'}</Text></Pressable>
-    {Platform.OS === 'web' && <View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/datenschutz.html')}><Text style={styles.legalLink}>Datenschutz</Text></Pressable><Text style={styles.muted}>·</Text><Pressable onPress={() => openLegalPage('/impressum.html')}><Text style={styles.legalLink}>Impressum</Text></Pressable></View>}
+    {Platform.OS === 'web' && <><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/quickstart.html')}><Text style={styles.legalLink}>Installation & Quickstart</Text></Pressable></View><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/datenschutz.html')}><Text style={styles.legalLink}>Datenschutz</Text></Pressable><Text style={styles.muted}>·</Text><Pressable onPress={() => openLegalPage('/impressum.html')}><Text style={styles.legalLink}>Impressum</Text></Pressable></View></>}
   </View></SafeAreaView>;
 }
 
@@ -334,6 +334,11 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
       <Text style={styles.cardTitle}>WhatsApp-Gruppe</Text>
       <Text style={styles.muted}>Tritt der WhatsApp-Gruppe zum Oberliga-Tippspiel bei.</Text>
       <Button label="WhatsApp-Gruppe beitreten" onPress={() => Linking.openURL('https://chat.whatsapp.com/HSCLswdwhKj3uaVcVAlhMH?s=sh&p=a&mlu=0')} />
+    </View>
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Hilfe & Installation</Text>
+      <Text style={styles.muted}>Schritt-für-Schritt-Anleitung für iPhone, iPad und Android.</Text>
+      <Button label="Quickstart Guide öffnen" onPress={() => Linking.openURL('https://oberliga-tippspiel.sued.workers.dev/quickstart.html')} />
     </View>
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Impressum</Text>
