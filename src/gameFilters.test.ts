@@ -16,6 +16,8 @@ function game(id: string, startsAt: string, isFinal = false, matchday: number | 
     awayScore: null,
     isLive: false,
     isFinal,
+    liveElapsedSeconds: null,
+    livePhase: null,
     predictedHome: null,
     predictedAway: null,
     points: null,

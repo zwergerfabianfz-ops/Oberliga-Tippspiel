@@ -18,6 +18,8 @@ export type Game = {
   awayScore: number | null;
   isLive: boolean;
   isFinal: boolean;
+  liveElapsedSeconds: number | null;
+  livePhase: string | null;
   predictedHome: number | null;
   predictedAway: number | null;
   points: number | null;

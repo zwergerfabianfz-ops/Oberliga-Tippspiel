@@ -13,7 +13,7 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 - einmaliger, bis zur Deadline änderbarer Hauptrunden-Tabellentipp
 - getrennte Ranglisten für Spiel- und Tabellentipps
 - Tippverlauf aller Mitspieler für bereits gestartete Spiele der letzten 14 Tage
-- automatisch aktualisierte Live-Spielstände während laufender Spiele
+- automatisch aktualisierte Live-Spielstände mit aktueller Spielminute während laufender Spiele
 - optionale Web-Push-Erinnerung etwa eine Stunde vor ungetippten Spielen
 - serverseitig konfigurierbarer DEB/HockeyData-Import
 - Expo/EAS-Konfiguration für App Store und Google Play
@@ -72,7 +72,7 @@ Der Importer liest den jeweils öffentlich eingebetteten Widget-Key serverseitig
 
 Für die Erstbefüllung kann der geprüfte SQL-Seed `supabase/migrations/202608280002_seed_oberliga_sued_2026.sql` einmal im Supabase SQL Editor ausgeführt werden. Ein neuer Stand lässt sich mit `npm run generate:deb-seed` erzeugen.
 
-Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations/202608300001_live_scores_and_recent_tips.sql` einmal im SQL Editor ausgeführt und die Edge Function `sync-deb` veröffentlicht. Angemeldete App-Nutzer dürfen den Import anstoßen, können dessen Daten aber nicht verändern. Während eines möglichen Live-Spiels fragt die App höchstens einmal pro Minute an; die Funktion überspringt einen Abruf, wenn die Daten vor weniger als 45 Sekunden aktualisiert wurden.
+Für Live-Spielstände und den Tippverlauf wird zusätzlich `supabase/migrations/202608300001_live_scores_and_recent_tips.sql` einmal im SQL Editor ausgeführt und die Edge Function `sync-deb` veröffentlicht. Die Migration `supabase/migrations/202609010001_live_game_clock.sql` ergänzt die von HockeyData gelieferte Spielzeit. Angemeldete App-Nutzer dürfen den Import anstoßen, können dessen Daten aber nicht verändern. Während eines möglichen Live-Spiels fragt die App alle 15 Sekunden an; die Funktion überspringt einen erneuten HockeyData-Abruf, wenn die Daten vor weniger als 12 Sekunden aktualisiert wurden.
 
 Die Migration `supabase/migrations/202608300002_official_matchdays.sql` ergänzt die Spieltagsnummer. Die App zeigt unter „Nächster Spieltag“ die Spiele des nächsten Kalendertags. Findet dort nur ein vorgezogenes Spiel statt, wird zusätzlich der unmittelbar folgende Spieltermin angezeigt. Dadurch bleibt die Auswahl kompakt, ohne die übrigen sechs Begegnungen eines geteilten Spieltags zu verstecken.
 

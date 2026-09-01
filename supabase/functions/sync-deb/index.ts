@@ -17,6 +17,8 @@ type HockeyDataRow = {
   awayTeamScore?: number | null;
   gameStatus?: number;
   gameHasEnded?: boolean;
+  liveTime?: number | null;
+  liveTimeGamePhase?: string | null;
 };
 
 const cors = {
@@ -47,7 +49,7 @@ Deno.serve(async req => {
     supabase.from('games').select('updated_at').eq('season_id', season.id).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('games').select('id', { count: 'exact', head: true }).eq('season_id', season.id).eq('is_preseason', true),
   ]);
-  if ((preseasonCount ?? 0) > 0 && latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 45_000) {
+  if ((preseasonCount ?? 0) > 0 && latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 12_000) {
     return json({ skipped: true, reason: 'recently-synced' });
   }
 
@@ -106,6 +108,8 @@ Deno.serve(async req => {
       away_score: isLive || isFinal ? row.awayTeamScore ?? 0 : null,
       is_live: isLive,
       is_final: isFinal,
+      live_elapsed_seconds: isLive && typeof row.liveTime === 'number' ? Math.max(0, Math.round(row.liveTime)) : null,
+      live_phase: isLive ? row.liveTimeGamePhase ?? null : null,
       is_preseason: false,
       updated_at: new Date().toISOString(),
     };
@@ -125,6 +129,8 @@ Deno.serve(async req => {
       away_score: isLive || isFinal ? row.awayTeamScore ?? 0 : null,
       is_live: isLive,
       is_final: isFinal,
+      live_elapsed_seconds: isLive && typeof row.liveTime === 'number' ? Math.max(0, Math.round(row.liveTime)) : null,
+      live_phase: isLive ? row.liveTimeGamePhase ?? null : null,
       is_preseason: true,
       updated_at: new Date().toISOString(),
     };
