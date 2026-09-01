@@ -34,6 +34,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     configurePwa();
@@ -49,8 +50,9 @@ export default function App() {
             let confirmationError = null;
             if (callback.code) ({ error: confirmationError } = await supabase.auth.exchangeCodeForSession(callback.code));
             else if (callback.accessToken && callback.refreshToken) ({ error: confirmationError } = await supabase.auth.setSession({ access_token: callback.accessToken, refresh_token: callback.refreshToken }));
-            setAuthNotice(confirmationError
-              ? { kind: 'error', message: 'Der Bestätigungslink konnte nicht verarbeitet werden. Versuche dich bitte anzumelden.' }
+            if (callback.kind === 'recovery' && !confirmationError) setPasswordRecovery(true);
+            else setAuthNotice(confirmationError
+              ? { kind: 'error', message: callback.kind === 'recovery' ? 'Der Link zum Zurücksetzen ist ungültig oder abgelaufen.' : 'Der Bestätigungslink konnte nicht verarbeitet werden. Versuche dich bitte anzumelden.' }
               : { kind: 'success', message: 'Deine E-Mail-Adresse wurde bestätigt. Dein Konto ist jetzt einsatzbereit.' });
           }
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -66,6 +68,7 @@ export default function App() {
 
   if (loading) return <ScreenLoader />;
   if (authNotice) return <AuthConfirmationScreen notice={authNotice} signedIn={Boolean(session)} onContinue={() => setAuthNotice(null)} />;
+  if (passwordRecovery && session) return <ResetPasswordScreen onComplete={() => setPasswordRecovery(false)} />;
   if (!session && isBackendConfigured) return <AuthScreen />;
   return <MainApp session={session} />;
 }
@@ -87,6 +90,29 @@ function AuthScreen() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+
+  async function requestPasswordReset() {
+    if (busy) return;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setFeedback({ kind: 'error', text: 'Bitte gib zuerst deine E-Mail-Adresse ein.' });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const { error } = await withAuthTimeout(supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo: confirmationRedirectUrl() }));
+      if (error) throw error;
+      setFeedback({ kind: 'success', text: 'Falls ein Konto mit dieser E-Mail-Adresse existiert, wurde ein Link zum Zurücksetzen versendet.' });
+    } catch (error) {
+      const text = error instanceof Error && error.message === 'Zeitüberschreitung'
+        ? 'Der Anmeldedienst antwortet gerade nicht. Bitte versuche es erneut.'
+        : 'Die E-Mail zum Zurücksetzen konnte nicht versendet werden. Bitte versuche es erneut.';
+      setFeedback({ kind: 'error', text });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit() {
     if (busy) return;
@@ -146,8 +172,44 @@ function AuthScreen() {
     <Field label="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
     <Button label={busy ? 'Bitte warten …' : mode === 'login' ? 'Einloggen' : 'Konto erstellen'} onPress={submit} disabled={busy} />
     {feedback && <Text accessibilityRole="alert" style={[styles.authFeedback, feedback.kind === 'error' ? styles.authFeedbackError : styles.authFeedbackSuccess]}>{feedback.text}</Text>}
+    {mode === 'login' && <Pressable disabled={busy} onPress={requestPasswordReset}><Text style={styles.passwordResetLink}>Passwort vergessen?</Text></Pressable>}
     <Pressable onPress={() => { setMode(mode === 'login' ? 'register' : 'login'); setFeedback(null); }}><Text style={styles.link}>{mode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon registriert? Einloggen'}</Text></Pressable>
     {Platform.OS === 'web' && <><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/quickstart.html')}><Text style={styles.legalLink}>Installation & Quickstart</Text></Pressable></View><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/datenschutz.html')}><Text style={styles.legalLink}>Datenschutz</Text></Pressable><Text style={styles.muted}>·</Text><Pressable onPress={() => openLegalPage('/impressum.html')}><Text style={styles.legalLink}>Impressum</Text></Pressable></View></>}
+  </View></SafeAreaView>;
+}
+
+function ResetPasswordScreen({ onComplete }: { onComplete: () => void }) {
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  async function savePassword() {
+    if (busy) return;
+    if (password.length < 8) { setFeedback('Das neue Passwort muss mindestens 8 Zeichen lang sein.'); return; }
+    if (password !== confirmation) { setFeedback('Die beiden Passwörter stimmen nicht überein.'); return; }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const { error } = await withAuthTimeout(supabase.auth.updateUser({ password }));
+      if (error) { setFeedback(error.message); return; }
+      Alert.alert('Passwort geändert', 'Du kannst das Tippspiel jetzt wieder verwenden.');
+      onComplete();
+    } catch {
+      setFeedback('Das Passwort konnte nicht gespeichert werden. Bitte öffne den Link erneut oder fordere einen neuen an.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <SafeAreaView style={styles.safe}><View style={styles.authWrap}>
+    <Text style={styles.brand}>PASSWORT ZURÜCKSETZEN</Text>
+    <Text style={styles.authTitle}>Neues Passwort</Text>
+    <Text style={styles.muted}>Wähle ein neues Passwort mit mindestens 8 Zeichen.</Text>
+    <Field label="Neues Passwort" value={password} onChangeText={setPassword} secureTextEntry />
+    <Field label="Passwort wiederholen" value={confirmation} onChangeText={setConfirmation} secureTextEntry />
+    <Button label={busy ? 'Bitte warten …' : 'Neues Passwort speichern'} onPress={savePassword} disabled={busy} />
+    {feedback && <Text accessibilityRole="alert" style={[styles.authFeedback, styles.authFeedbackError]}>{feedback}</Text>}
   </View></SafeAreaView>;
 }
 
@@ -525,4 +587,5 @@ const styles = StyleSheet.create({
   authFeedback: { marginTop: 13, padding: 11, borderRadius: 9, fontSize: 13, fontWeight: '700', lineHeight: 18 },
   authFeedbackError: { color: '#ffd4d4', backgroundColor: '#421c27' },
   authFeedbackSuccess: { color: c.lime, backgroundColor: '#183220' },
+  passwordResetLink: { color: c.lime, textAlign: 'center', paddingTop: 18, fontWeight: '800' },
 });

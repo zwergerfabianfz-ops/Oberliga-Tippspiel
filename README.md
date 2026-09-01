@@ -5,6 +5,7 @@ Ein plattformübergreifender Expo-MVP für iOS und Android mit Supabase-Backend.
 ## Enthalten
 
 - Registrierung und Anmeldung mit E-Mail/Passwort
+- Passwort-zurücksetzen per E-Mail-Link
 - eindeutiger, im Profil änderbarer Anzeigename
 - Tipps für Testspiele, Hauptrunde und Playoffs, serverseitig exakt zum Spielbeginn gesperrt
 - Testspieltipps ohne Wertung; Auswahl und Verlauf verschwinden zum Start der Hauptrunde

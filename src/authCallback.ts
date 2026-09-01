@@ -1,5 +1,6 @@
 export type AuthCallbackData =
   | { kind: 'signup'; accessToken: string | null; refreshToken: string | null; code: string | null }
+  | { kind: 'recovery'; accessToken: string | null; refreshToken: string | null; code: string | null }
   | { kind: 'error'; errorCode: string | null }
   | null;
 
@@ -12,9 +13,10 @@ export function parseAuthCallback(value: string): AuthCallbackData {
 
   const type = hash.get('type') ?? query.get('type');
   const code = query.get('code');
-  if (type !== 'signup' && !code) return null;
+  const recovery = type === 'recovery' || query.get('mode') === 'recovery';
+  if (type !== 'signup' && !recovery && !code) return null;
   return {
-    kind: 'signup',
+    kind: recovery ? 'recovery' : 'signup',
     accessToken: hash.get('access_token'),
     refreshToken: hash.get('refresh_token'),
     code,
