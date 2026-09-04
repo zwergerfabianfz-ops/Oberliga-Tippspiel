@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { parseAuthCallback } from './src/authCallback';
-import { authErrorMessage, withAuthTimeout } from './src/authErrors';
+import { authErrorMessage, registrationErrorMessage, withAuthTimeout } from './src/authErrors';
 import { displayNameValidationError, normalizeDisplayName } from './src/displayNames';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { liveClockLabel } from './src/liveGame';
@@ -115,6 +115,29 @@ function AuthScreen() {
     }
   }
 
+  async function resendConfirmation() {
+    if (busy) return;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setFeedback({ kind: 'error', text: 'Bitte gib zuerst deine E-Mail-Adresse ein.' });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const { error } = await withAuthTimeout(supabase.auth.resend({ type: 'signup', email: normalizedEmail, options: { emailRedirectTo: confirmationRedirectUrl() } }));
+      if (error) {
+        setFeedback({ kind: 'error', text: registrationErrorMessage(error) });
+        return;
+      }
+      setFeedback({ kind: 'success', text: 'Die Bestätigungs-E-Mail wurde erneut versendet. Bitte prüfe auch den Spam-Ordner.' });
+    } catch {
+      setFeedback({ kind: 'error', text: 'Die Bestätigungs-E-Mail konnte gerade nicht versendet werden. Bitte versuche es später erneut.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit() {
     if (busy) return;
     const normalizedName = normalizeDisplayName(name);
@@ -131,7 +154,7 @@ function AuthScreen() {
       if (mode === 'register') {
         const { data: available, error } = await withAuthTimeout(supabase.rpc('is_display_name_available', { p_display_name: normalizedName }));
         if ((error && !isMissingRpcError(error.code)) || available === false) {
-          const text = error ? 'Der Anzeigename konnte gerade nicht geprüft werden. Bitte versuche es erneut.' : 'Dieser Anzeigename ist bereits vergeben. Bitte wähle einen anderen.';
+          const text = error ? 'Der Anzeigename konnte gerade nicht geprüft werden. Bitte versuche es erneut.' : 'Dieser Anzeigename ist vergeben oder für eine noch unbestätigte Registrierung reserviert. Wenn das dein eigener Versuch war, sende dir auf der Anmeldeseite die Bestätigungs-E-Mail erneut.';
           setFeedback({ kind: 'error', text });
           Alert.alert(error ? 'Prüfung nicht möglich' : 'Name bereits vergeben', text);
           return;
@@ -142,7 +165,7 @@ function AuthScreen() {
         ? await withAuthTimeout(supabase.auth.signInWithPassword({ email: normalizedEmail, password }))
         : await withAuthTimeout(supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { display_name: normalizedName }, emailRedirectTo: confirmationRedirectUrl() } }));
       if (result.error) {
-        const text = authErrorMessage(result.error);
+        const text = mode === 'register' ? registrationErrorMessage(result.error) : authErrorMessage(result.error);
         setFeedback({ kind: 'error', text });
         Alert.alert('Anmeldung fehlgeschlagen', text);
       } else if (mode === 'register' && !result.data.session) {
@@ -173,7 +196,7 @@ function AuthScreen() {
     <Field label="Passwort" value={password} onChangeText={setPassword} secureTextEntry />
     <Button label={busy ? 'Bitte warten …' : mode === 'login' ? 'Einloggen' : 'Konto erstellen'} onPress={submit} disabled={busy} />
     {feedback && <Text accessibilityRole="alert" style={[styles.authFeedback, feedback.kind === 'error' ? styles.authFeedbackError : styles.authFeedbackSuccess]}>{feedback.text}</Text>}
-    {mode === 'login' && <Pressable disabled={busy} onPress={requestPasswordReset}><Text style={styles.passwordResetLink}>Passwort vergessen?</Text></Pressable>}
+    {mode === 'login' && <View style={styles.authHelpLinks}><Pressable disabled={busy} onPress={requestPasswordReset}><Text style={styles.passwordResetLink}>Passwort vergessen?</Text></Pressable><Pressable disabled={busy} onPress={resendConfirmation}><Text style={styles.passwordResetLink}>Bestätigungs-E-Mail erneut senden</Text></Pressable></View>}
     <Pressable onPress={() => { setMode(mode === 'login' ? 'register' : 'login'); setFeedback(null); }}><Text style={styles.link}>{mode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon registriert? Einloggen'}</Text></Pressable>
     {Platform.OS === 'web' && <><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/quickstart.html')}><Text style={styles.legalLink}>Installation & Quickstart</Text></Pressable></View><View style={styles.legalLinks}><Pressable onPress={() => openLegalPage('/datenschutz.html')}><Text style={styles.legalLink}>Datenschutz</Text></Pressable><Text style={styles.muted}>·</Text><Pressable onPress={() => openLegalPage('/impressum.html')}><Text style={styles.legalLink}>Impressum</Text></Pressable></View></>}
   </View></SafeAreaView>;
@@ -590,4 +613,5 @@ const styles = StyleSheet.create({
   authFeedbackError: { color: '#ffd4d4', backgroundColor: '#421c27' },
   authFeedbackSuccess: { color: c.lime, backgroundColor: '#183220' },
   passwordResetLink: { color: c.lime, textAlign: 'center', paddingTop: 18, fontWeight: '800' },
+  authHelpLinks: { alignItems: 'center' },
 });
