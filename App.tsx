@@ -458,19 +458,38 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
 
 function TableTipScreen({ season, teams, session, onSaved }: { season: Season; teams: Team[]; session: Session | null; onSaved: (teams: Team[]) => void }) {
   const [ordered, setOrdered] = useState(teams);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveMessage, setSaveMessage] = useState('');
   const open = new Date() < new Date(season.tablePredictionDeadline);
   useEffect(() => setOrdered(teams), [teams]);
-  function move(index: number, delta: number) { const next = [...ordered]; const target = index + delta; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target]!, next[index]!]; setOrdered(next); }
+  function move(index: number, delta: number) { const next = [...ordered]; const target = index + delta; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target]!, next[index]!]; setOrdered(next); setSaveState('idle'); setSaveMessage(''); }
   async function save() {
-    if (!open) return;
-    if (session) { const { error } = await supabase.rpc('save_table_prediction', { p_season_id: season.id, p_team_ids: ordered.map(t => t.id) }); if (error) { Alert.alert('Nicht gespeichert', error.message); return; } }
-    onSaved([...ordered]);
-    Alert.alert('Tabellentipp gespeichert', 'Du kannst ihn bis zur Deadline weiter ändern.');
+    if (!open || saveState === 'saving') return;
+    setSaveState('saving');
+    setSaveMessage('Tabellentipp wird gespeichert …');
+    try {
+      if (session) {
+        const { error } = await supabase.rpc('save_table_prediction', { p_season_id: season.id, p_team_ids: ordered.map(t => t.id) });
+        if (error) {
+          setSaveState('error');
+          setSaveMessage(`Nicht gespeichert: ${error.message}`);
+          Alert.alert('Nicht gespeichert', error.message);
+          return;
+        }
+      }
+      onSaved([...ordered]);
+      setSaveState('saved');
+      setSaveMessage('✓ Tabellentipp gespeichert. Du kannst ihn bis zur Deadline weiter ändern.');
+    } catch {
+      setSaveState('error');
+      setSaveMessage('Nicht gespeichert. Bitte prüfe deine Internetverbindung und versuche es erneut.');
+    }
   }
   const deadline = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(season.tablePredictionDeadline));
   return <><View style={styles.deadline}><Text style={styles.deadlineLabel}>{open ? 'ABGABE BIS' : 'ABGABE BEENDET'}</Text><Text style={styles.deadlineValue}>{deadline} Uhr</Text></View><Text style={styles.sectionHint}>Sortiere alle Teams auf ihre erwartete Abschlussposition. Pro Team gibt es bei {teams.length} Teams maximal {teams.length} Punkte; jeder Platz Abweichung kostet einen Punkt.</Text>
     {ordered.map((team, i) => <View key={team.id} style={styles.teamRank}><Text style={styles.rankNo}>{i + 1}</Text><TeamLogo team={team} /><Text style={styles.teamName}>{team.name}</Text>{open && <View style={styles.arrows}><Pressable onPress={() => move(i, -1)}><Text style={styles.arrow}>↑</Text></Pressable><Pressable onPress={() => move(i, 1)}><Text style={styles.arrow}>↓</Text></Pressable></View>}</View>)}
-    {open && <Button label="Tabellentipp speichern" onPress={save} />}
+    {open && <Button label={saveState === 'saving' ? 'Speichert …' : saveState === 'saved' ? 'Erneut speichern' : 'Tabellentipp speichern'} onPress={save} disabled={saveState === 'saving'} />}
+    {saveState !== 'idle' && <Text accessibilityRole="alert" style={[styles.tableSaveFeedback, saveState === 'error' && styles.saveError]}>{saveMessage}</Text>}
   </>;
 }
 
@@ -614,4 +633,5 @@ const styles = StyleSheet.create({
   authFeedbackSuccess: { color: c.lime, backgroundColor: '#183220' },
   passwordResetLink: { color: c.lime, textAlign: 'center', paddingTop: 18, fontWeight: '800' },
   authHelpLinks: { alignItems: 'center' },
+  tableSaveFeedback: { color: c.lime, textAlign: 'center', marginTop: 12, fontSize: 12, fontWeight: '800', lineHeight: 18 },
 });
