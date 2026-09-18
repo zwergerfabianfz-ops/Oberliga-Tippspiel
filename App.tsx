@@ -636,10 +636,14 @@ function AdminPanel({ games, onChanged }: { games: Game[]; onChanged: () => void
     }
   }
 
-  const pastGames = games.filter(game => new Date(game.startsAt).getTime() <= Date.now()).sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const pastGames = games
+    .filter(game => game.phase === 'regular' && new Date(game.startsAt).getTime() <= now && new Date(game.startsAt).getTime() >= sevenDaysAgo)
+    .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
   return <View style={[styles.card, styles.adminCard]}>
     <Text style={styles.cardTitle}>Admin: Tipps verwalten</Text>
-    <Text style={styles.muted}>Hier kannst nur du Tipps nach Spielbeginn nachtragen oder korrigieren. Bereits beendete Spiele werden sofort neu bewertet.</Text>
+    <Text style={styles.muted}>Hier kannst nur du Tipps nach Spielbeginn nachtragen oder korrigieren. Angezeigt werden nur Hauptrundenspiele der letzten sieben Tage. Bereits beendete Spiele werden sofort neu bewertet.</Text>
     <Button label={exporting ? 'CSV wird erstellt …' : 'Bisherige Tipps als CSV exportieren'} onPress={exportCsv} disabled={exporting} />
     <Text style={styles.adminLabel}>SPIELER AUSWÄHLEN</Text>
     {loading ? <ActivityIndicator color={c.lime} /> : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.adminUserList}>
