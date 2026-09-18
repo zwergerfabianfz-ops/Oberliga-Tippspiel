@@ -18,6 +18,7 @@ import type { Session } from '@supabase/supabase-js';
 import { parseAuthCallback } from './src/authCallback';
 import { authErrorMessage, registrationErrorMessage, withAuthTimeout } from './src/authErrors';
 import { displayNameValidationError, normalizeDisplayName } from './src/displayNames';
+import { gameTipsCsv } from './src/csv';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { liveClockLabel } from './src/liveGame';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
@@ -324,7 +325,7 @@ function MainApp({ session }: { session: Session | null }) {
       {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
       {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} session={session} onSaved={setTeams} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
-      {tab === 'profil' && <ProfileScreen session={session} onRefresh={load} />}
+      {tab === 'profil' && <ProfileScreen session={session} games={games} onRefresh={load} />}
     </ScrollView>
     <View style={styles.nav}>{(['spiele', 'verlauf', 'tabelle', 'rangliste', 'profil'] as Tab[]).map(item => <Pressable key={item} style={styles.navItem} onPress={() => setTab(item)}><Text style={[styles.navIcon, tab === item && styles.active]}>{({ spiele: '◫', verlauf: '◷', tabelle: '≡', rangliste: '♛', profil: '●' } as const)[item]}</Text><Text style={[styles.navLabel, tab === item && styles.active]}>{item[0]!.toUpperCase() + item.slice(1)}</Text></Pressable>)}</View>
   </SafeAreaView>;
@@ -502,19 +503,23 @@ function RankingScreen({ games, table, season }: { games: LeaderboardEntry[]; ta
   </>;
 }
 
-function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefresh: () => void }) {
+function ProfileScreen({ session, games, onRefresh }: { session: Session | null; games: Game[]; onRefresh: () => void }) {
   const pushSupported = pushNotificationsSupported();
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [displayName, setDisplayName] = useState(() => String(session?.user.user_metadata?.display_name ?? ''));
   const [nameBusy, setNameBusy] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     if (pushSupported) pushNotificationsEnabled().then(setPushEnabled).catch(() => setPushEnabled(false));
   }, [pushSupported]);
   useEffect(() => {
     if (!session) return;
-    supabase.from('profiles').select('display_name').eq('id', session.user.id).single()
-      .then(({ data }) => { if (data?.display_name) setDisplayName(data.display_name); });
+    supabase.from('profiles').select('display_name,is_admin').eq('id', session.user.id).single()
+      .then(({ data }) => {
+        if (data?.display_name) setDisplayName(data.display_name);
+        setIsAdmin(data?.is_admin === true);
+      });
   }, [session]);
   async function saveDisplayName() {
     if (!session || nameBusy) return;
@@ -558,6 +563,7 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
       <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn – aber nur, wenn dein Tipp für dieses Spiel noch fehlt.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
       {pushSupported && <Button label={pushBusy ? 'Bitte warten …' : pushEnabled ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten'} onPress={togglePush} disabled={pushBusy} />}
     </View>}
+    {isAdmin && <AdminPanel games={games} onChanged={onRefresh} />}
     <View style={styles.card}>
       <Text style={styles.cardTitle}>WhatsApp-Gruppe</Text>
       <Text style={styles.muted}>Tritt der WhatsApp-Gruppe zum Oberliga-Tippspiel bei.</Text>
@@ -579,6 +585,109 @@ function ProfileScreen({ session, onRefresh }: { session: Session | null; onRefr
   </>;
 }
 
+type AdminUser = { user_id: string; display_name: string };
+type AdminPrediction = { game_id: string; predicted_home: number; predicted_away: number; points: number | null };
+
+function AdminPanel({ games, onChanged }: { games: Game[]; onChanged: () => void }) {
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [predictions, setPredictions] = useState<Map<string, AdminPrediction>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    supabase.rpc('admin_list_users').then(({ data, error }) => {
+      if (error) { Alert.alert('Admin-Bereich nicht verfügbar', error.message); return; }
+      const next = (data ?? []) as AdminUser[];
+      setUsers(next);
+      setSelectedUserId(current => current ?? next[0]?.user_id ?? null);
+    }).then(() => setLoading(false), () => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUserId) { setPredictions(new Map()); return; }
+    supabase.rpc('admin_user_game_predictions', { p_user_id: selectedUserId }).then(({ data, error }) => {
+      if (error) { Alert.alert('Tipps nicht geladen', error.message); return; }
+      setPredictions(new Map(((data ?? []) as AdminPrediction[]).map(item => [item.game_id, item])));
+    });
+  }, [selectedUserId]);
+
+  async function exportCsv() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_game_tips_export');
+      if (error) throw error;
+      if (Platform.OS !== 'web' || typeof document === 'undefined') {
+        Alert.alert('CSV-Export', 'Der Export steht in der Web-App zur Verfügung.');
+        return;
+      }
+      const blob = new Blob([`\uFEFF${gameTipsCsv(data ?? [])}`], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `oberliga-tipps-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      Alert.alert('Export nicht möglich', error instanceof Error ? error.message : 'Bitte versuche es erneut.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const pastGames = games.filter(game => new Date(game.startsAt).getTime() <= Date.now()).sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
+  return <View style={[styles.card, styles.adminCard]}>
+    <Text style={styles.cardTitle}>Admin: Tipps verwalten</Text>
+    <Text style={styles.muted}>Hier kannst nur du Tipps nach Spielbeginn nachtragen oder korrigieren. Bereits beendete Spiele werden sofort neu bewertet.</Text>
+    <Button label={exporting ? 'CSV wird erstellt …' : 'Bisherige Tipps als CSV exportieren'} onPress={exportCsv} disabled={exporting} />
+    <Text style={styles.adminLabel}>SPIELER AUSWÄHLEN</Text>
+    {loading ? <ActivityIndicator color={c.lime} /> : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.adminUserList}>
+      {users.map(user => <Pressable key={user.user_id} onPress={() => setSelectedUserId(user.user_id)} style={[styles.adminUser, selectedUserId === user.user_id && styles.adminUserActive]}><Text style={[styles.adminUserText, selectedUserId === user.user_id && styles.adminUserTextActive]}>{user.display_name}</Text></Pressable>)}
+    </ScrollView>}
+    {selectedUserId && pastGames.map(game => <AdminGameTip key={`${selectedUserId}-${game.id}`} game={game} prediction={predictions.get(game.id)} userId={selectedUserId} onSaved={(prediction) => {
+      setPredictions(current => new Map(current).set(game.id, prediction));
+      onChanged();
+    }} />)}
+    {!loading && !pastGames.length && <Text style={styles.profileHint}>Es gibt noch keine gestarteten Spiele.</Text>}
+  </View>;
+}
+
+function AdminGameTip({ game, prediction, userId, onSaved }: { game: Game; prediction?: AdminPrediction; userId: string; onSaved: (prediction: AdminPrediction) => void }) {
+  const [home, setHome] = useState(prediction?.predicted_home?.toString() ?? '');
+  const [away, setAway] = useState(prediction?.predicted_away?.toString() ?? '');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  useEffect(() => {
+    setHome(prediction?.predicted_home?.toString() ?? '');
+    setAway(prediction?.predicted_away?.toString() ?? '');
+    setFeedback('');
+  }, [prediction?.predicted_away, prediction?.predicted_home]);
+  const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
+  async function save() {
+    const h = Number(home), a = Number(away);
+    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) {
+      setFeedback('Bitte 0 bis 30 Tore eintragen.');
+      return;
+    }
+    setBusy(true);
+    setFeedback('');
+    const { error } = await supabase.rpc('admin_save_game_prediction', { p_user_id: userId, p_game_id: game.id, p_home: h, p_away: a });
+    if (error) setFeedback(`Nicht gespeichert: ${error.message}`);
+    else {
+      onSaved({ game_id: game.id, predicted_home: h, predicted_away: a, points: game.isFinal && game.homeScore !== null && game.awayScore !== null ? scoreTip(h, a, game.homeScore, game.awayScore) : null });
+      setFeedback('✓ Admin-Tipp gespeichert');
+    }
+    setBusy(false);
+  }
+  return <View style={styles.adminGame}>
+    <Text style={styles.adminGameDate}>{date} Uhr{game.isFinal ? ` · Endstand ${game.homeScore}:${game.awayScore}` : ''}</Text>
+    <Text style={styles.adminGameTeams}>{game.homeTeam.name} – {game.awayTeam.name}</Text>
+    <View style={styles.adminScoreRow}><ScoreInput value={home} onChange={setHome} disabled={busy} /><Text style={styles.colon}>:</Text><ScoreInput value={away} onChange={setAway} disabled={busy} /><Pressable disabled={busy} onPress={save} style={[styles.adminSave, busy && { opacity: .5 }]}><Text style={styles.adminSaveText}>{busy ? '…' : 'Speichern'}</Text></Pressable></View>
+    {feedback && <Text style={[styles.profileHint, feedback.startsWith('Nicht') && styles.saveError]}>{feedback}</Text>}
+  </View>;
+}
+
 function Field(props: React.ComponentProps<typeof TextInput> & { label: string }) { return <View style={styles.fieldWrap}><Text style={styles.label}>{props.label}</Text><TextInput placeholderTextColor="#718096" style={styles.field} {...props} /></View>; }
 function ScoreInput({ value, onChange, disabled }: { value: string; onChange: (s: string) => void; disabled: boolean }) { return <TextInput value={value} onChangeText={onChange} editable={!disabled} keyboardType="number-pad" maxLength={2} style={[styles.score, disabled && styles.scoreDisabled]} placeholder="–" placeholderTextColor="#536071" />; }
 function TeamBlock({ team }: { team: Team }) { return <View style={styles.teamBlock}><TeamLogo team={team} large /><Text numberOfLines={2} style={styles.teamBlockName}>{team.name}</Text></View>; }
@@ -598,6 +707,11 @@ function titleFor(tab: Tab) { return ({ spiele: 'Meine Tipps', verlauf: 'Tippver
 function openLegalPage(path: string) { if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(path); }
 function confirmationRedirectUrl() { return Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined; }
 function isMissingRpcError(code?: string) { return code === 'PGRST202' || code === '42883'; }
+function scoreTip(predictedHome: number, predictedAway: number, actualHome: number, actualAway: number) {
+  if (predictedHome === actualHome && predictedAway === actualAway) return 3;
+  if (predictedHome - predictedAway === actualHome - actualAway) return 2;
+  return Math.sign(predictedHome - predictedAway) === Math.sign(actualHome - actualAway) ? 1 : 0;
+}
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
 function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
@@ -634,4 +748,17 @@ const styles = StyleSheet.create({
   passwordResetLink: { color: c.lime, textAlign: 'center', paddingTop: 18, fontWeight: '800' },
   authHelpLinks: { alignItems: 'center' },
   tableSaveFeedback: { color: c.lime, textAlign: 'center', marginTop: 12, fontSize: 12, fontWeight: '800', lineHeight: 18 },
+  adminCard: { borderColor: '#607f2b' },
+  adminLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginTop: 18, marginBottom: 8 },
+  adminUserList: { gap: 8, paddingRight: 10 },
+  adminUser: { borderWidth: 1, borderColor: c.line, borderRadius: 18, paddingVertical: 8, paddingHorizontal: 12 },
+  adminUserActive: { backgroundColor: c.lime, borderColor: c.lime },
+  adminUserText: { color: c.ink, fontSize: 12, fontWeight: '800' },
+  adminUserTextActive: { color: c.bg },
+  adminGame: { borderTopWidth: 1, borderTopColor: c.line, paddingTop: 13, marginTop: 13 },
+  adminGameDate: { color: c.muted, fontSize: 11, fontWeight: '800' },
+  adminGameTeams: { color: c.ink, fontSize: 13, fontWeight: '800', marginTop: 3 },
+  adminScoreRow: { alignItems: 'center', flexDirection: 'row', marginTop: 10 },
+  adminSave: { backgroundColor: c.lime, borderRadius: 9, marginLeft: 10, paddingHorizontal: 11, paddingVertical: 11 },
+  adminSaveText: { color: c.bg, fontSize: 11, fontWeight: '900' },
 });
