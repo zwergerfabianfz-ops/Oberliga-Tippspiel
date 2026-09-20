@@ -95,7 +95,7 @@ Deno.serve(async req => {
 
   const games = rows.map(row => {
     const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
-    const isLive = !isFinal && [1, 2].includes(row.gameStatus ?? 0);
+    const isLive = !isFinal && row.gameUtcTimestamp <= Date.now() && [1, 2].includes(row.gameStatus ?? 0);
     return {
       season_id: season.id,
       external_id: row.id,
@@ -116,7 +116,7 @@ Deno.serve(async req => {
   });
   const preseasonGames = relevantPreseasonRows.map(row => {
     const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
-    const isLive = !isFinal && [1, 2].includes(row.gameStatus ?? 0);
+    const isLive = !isFinal && row.gameUtcTimestamp <= Date.now() && [1, 2].includes(row.gameStatus ?? 0);
     return {
       season_id: season.id,
       external_id: `preseason:${row.id}`,

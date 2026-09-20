@@ -21,6 +21,7 @@ import { displayNameValidationError, normalizeDisplayName } from './src/displayN
 import { gameTipsCsv } from './src/csv';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
 import { liveClockLabel } from './src/liveGame';
+import { isOfficiallyLive } from './src/liveStatus';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
 import { isTipOpen } from './src/scoring';
@@ -717,7 +718,7 @@ function scoreTip(predictedHome: number, predictedAway: number, actualHome: numb
   return Math.sign(predictedHome - predictedAway) === Math.sign(actualHome - actualAway) ? 1 : 0;
 }
 function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
-function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: isOfficiallyLive(row.is_live === true, row.starts_at), isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
