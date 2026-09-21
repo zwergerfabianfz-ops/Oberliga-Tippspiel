@@ -7,6 +7,18 @@ export type Season = {
 
 export type Team = { id: string; name: string; shortName: string; logoUrl?: string | null; isCompetitor?: boolean };
 
+export type LiveStanding = {
+  team: Team;
+  position: number;
+  gamesPlayed: number;
+  wins: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+};
+
 export type Game = {
   id: string;
   phase: 'preseason' | 'regular' | 'playoffs';

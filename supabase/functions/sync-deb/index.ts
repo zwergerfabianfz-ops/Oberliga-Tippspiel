@@ -21,6 +21,20 @@ type HockeyDataRow = {
   liveTimeGamePhase?: string | null;
 };
 
+type HockeyDataStanding = {
+  id: number | string;
+  tableRank: number;
+  gamesPlayed?: number;
+  gamesWon?: number;
+  gamesWonInOt?: number;
+  gamesLost?: number;
+  gamesLostInOt?: number;
+  goalsFor?: number;
+  goalsAgainst?: number;
+  goalDifference?: string | number;
+  points?: number;
+};
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -57,10 +71,12 @@ Deno.serve(async req => {
   if (!apiKey) return json({ error: 'Kein HockeyData-Key auf der DEB-Seite gefunden.' }, 503);
   let rows: HockeyDataRow[];
   let preseasonRows: HockeyDataRow[];
+  let standings: HockeyDataStanding[];
   try {
-    [rows, preseasonRows] = await Promise.all([
+    [rows, preseasonRows, standings] = await Promise.all([
       fetchSchedule(apiKey, season.external_division_id),
       fetchSchedule(apiKey, PRESEASON_DIVISION_ID),
+      fetchStandings(apiKey, season.external_division_id),
     ]);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'DEB/HockeyData-Abruf fehlgeschlagen' }, 502);
@@ -92,6 +108,27 @@ Deno.serve(async req => {
   if (teamError) return json({ error: teamError.message }, 500);
   const { data: storedTeams } = await supabase.from('teams').select('id,external_id').eq('season_id', season.id);
   const teamIds = new Map(storedTeams?.map(t => [t.external_id, t.id]));
+  const standingRows = standings.flatMap(row => {
+    const teamId = teamIds.get(String(row.id));
+    if (!teamId || !Number.isInteger(row.tableRank) || row.tableRank < 1) return [];
+    return [{
+      season_id: season.id,
+      team_id: teamId,
+      position: row.tableRank,
+      games_played: row.gamesPlayed ?? 0,
+      wins: (row.gamesWon ?? 0) + (row.gamesWonInOt ?? 0),
+      losses: (row.gamesLost ?? 0) + (row.gamesLostInOt ?? 0),
+      goals_for: row.goalsFor ?? 0,
+      goals_against: row.goalsAgainst ?? 0,
+      goal_difference: Number(row.goalDifference ?? 0),
+      points: row.points ?? 0,
+      updated_at: new Date().toISOString(),
+    }];
+  });
+  if (standingRows.length) {
+    const { error: standingError } = await supabase.from('team_standings').upsert(standingRows, { onConflict: 'season_id,team_id' });
+    if (standingError) return json({ error: standingError.message }, 500);
+  }
 
   const games = rows.map(row => {
     const isFinal = row.gameHasEnded === true || [3, 4].includes(row.gameStatus ?? 0);
@@ -138,7 +175,7 @@ Deno.serve(async req => {
   games.push(...preseasonGames);
   const { error: gameError } = await supabase.from('games').upsert(games, { onConflict: 'season_id,external_id' });
   if (gameError) return json({ error: gameError.message }, 500);
-  return json({ importedGames: games.length, importedPreseasonGames: preseasonGames.length, importedTeams: teams.length, liveGames: games.filter(game => game.is_live).length });
+  return json({ importedGames: games.length, importedPreseasonGames: preseasonGames.length, importedTeams: teams.length, importedStandings: standingRows.length, liveGames: games.filter(game => game.is_live).length });
 });
 
 async function fetchSchedule(apiKey: string, divisionId: string): Promise<HockeyDataRow[]> {
@@ -151,6 +188,19 @@ async function fetchSchedule(apiKey: string, divisionId: string): Promise<Hockey
   const response = await fetch(endpoint);
   const payload = await response.json();
   if (!response.ok || payload.statusId <= 0) throw new Error(payload.statusMsg ?? `Abruf für ${divisionId} fehlgeschlagen`);
+  return payload.data?.rows ?? [];
+}
+
+async function fetchStandings(apiKey: string, divisionId: string): Promise<HockeyDataStanding[]> {
+  const endpoint = new URL('https://api.hockeydata.net/data/ebel/Standings');
+  endpoint.searchParams.set('apiKey', apiKey);
+  endpoint.searchParams.set('referer', 'deb-online.live');
+  endpoint.searchParams.set('lang', 'de');
+  endpoint.searchParams.set('divisionId', divisionId);
+  endpoint.searchParams.set('widgetOptions', JSON.stringify({ semantic: true }));
+  const response = await fetch(endpoint);
+  const payload = await response.json();
+  if (!response.ok || payload.statusId <= 0) throw new Error(payload.statusMsg ?? `Tabellenabruf für ${divisionId} fehlgeschlagen`);
   return payload.data?.rows ?? [];
 }
 

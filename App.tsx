@@ -26,7 +26,7 @@ import { disablePushNotifications, enablePushNotifications, pushNotificationsEna
 import { configurePwa } from './src/pwa';
 import { isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
-import type { Game, LeaderboardEntry, RecentPrediction, Season, Team } from './src/types';
+import type { Game, LeaderboardEntry, LiveStanding, RecentPrediction, Season, Team } from './src/types';
 
 type Tab = 'spiele' | 'verlauf' | 'tabelle' | 'rangliste' | 'profil';
 type AuthNotice = { kind: 'success' | 'error'; message: string };
@@ -244,6 +244,7 @@ function MainApp({ session }: { session: Session | null }) {
   const [games, setGames] = useState<Game[]>([]);
   const [season, setSeason] = useState<Season>(demoSeason);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [liveStandings, setLiveStandings] = useState<LiveStanding[]>([]);
   const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([]);
   const [tableRanking, setTableRanking] = useState<LeaderboardEntry[]>([]);
   const [recentPredictions, setRecentPredictions] = useState<RecentPrediction[]>([]);
@@ -265,7 +266,10 @@ function MainApp({ session }: { session: Session | null }) {
     if (gameRanks) setGameRanking(gameRanks.map(mapRank));
     if (tableRanks) setTableRanking(tableRanks.map(mapRank));
     if (recentRows) setRecentPredictions(recentRows.map(mapRecentPrediction));
-    const { data: teamRows } = current ? await supabase.from('teams').select('*').eq('season_id', current.id).order('name') : { data: null };
+    const [{ data: teamRows }, { data: standingRows }] = current ? await Promise.all([
+      supabase.from('teams').select('*').eq('season_id', current.id).order('name'),
+      supabase.from('team_standings').select('*').eq('season_id', current.id).order('position'),
+    ]) : [{ data: null }, { data: null }];
     const teamsById = new Map<string, Team>();
     if (teamRows?.length) {
       const regularTeamIds = new Set((gameRows ?? [])
@@ -287,6 +291,20 @@ function MainApp({ session }: { session: Session | null }) {
         return team ? [team] : [];
       });
       setTeams(ordered?.length === competitors.length ? ordered : competitors);
+      setLiveStandings((standingRows ?? []).flatMap(row => {
+        const team = teamsById.get(row.team_id);
+        return team ? [{
+          team,
+          position: Number(row.position),
+          gamesPlayed: Number(row.games_played),
+          wins: Number(row.wins),
+          losses: Number(row.losses),
+          goalsFor: Number(row.goals_for),
+          goalsAgainst: Number(row.goals_against),
+          goalDifference: Number(row.goal_difference),
+          points: Number(row.points),
+        }] : [];
+      }));
     }
     setGames((gameRows ?? []).map(row => mapGame(row, teamsById)));
     setRefreshing(false);
@@ -324,7 +342,7 @@ function MainApp({ session }: { session: Session | null }) {
       {refreshing ? <ActivityIndicator color="#b8f341" /> : null}
       {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} />}
       {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
-      {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} session={session} onSaved={setTeams} />}
+      {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} liveStandings={liveStandings} session={session} onSaved={setTeams} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
       {tab === 'profil' && <ProfileScreen session={session} games={games} onRefresh={load} />}
     </ScrollView>
@@ -458,7 +476,8 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
   </>;
 }
 
-function TableTipScreen({ season, teams, session, onSaved }: { season: Season; teams: Team[]; session: Session | null; onSaved: (teams: Team[]) => void }) {
+function TableTipScreen({ season, teams, liveStandings, session, onSaved }: { season: Season; teams: Team[]; liveStandings: LiveStanding[]; session: Session | null; onSaved: (teams: Team[]) => void }) {
+  const [view, setView] = useState<'live' | 'prediction'>('live');
   const [ordered, setOrdered] = useState(teams);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState('');
@@ -488,10 +507,21 @@ function TableTipScreen({ season, teams, session, onSaved }: { season: Season; t
     }
   }
   const deadline = new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(season.tablePredictionDeadline));
-  return <><View style={styles.deadline}><Text style={styles.deadlineLabel}>{open ? 'ABGABE BIS' : 'ABGABE BEENDET'}</Text><Text style={styles.deadlineValue}>{deadline} Uhr</Text></View><Text style={styles.sectionHint}>Sortiere alle Teams auf ihre erwartete Abschlussposition. Pro Team gibt es bei {teams.length} Teams maximal {teams.length} Punkte; jeder Platz Abweichung kostet einen Punkt.</Text>
-    {ordered.map((team, i) => <View key={team.id} style={styles.teamRank}><Text style={styles.rankNo}>{i + 1}</Text><TeamLogo team={team} /><Text style={styles.teamName}>{team.name}</Text>{open && <View style={styles.arrows}><Pressable onPress={() => move(i, -1)}><Text style={styles.arrow}>↑</Text></Pressable><Pressable onPress={() => move(i, 1)}><Text style={styles.arrow}>↓</Text></Pressable></View>}</View>)}
-    {open && <Button label={saveState === 'saving' ? 'Speichert …' : saveState === 'saved' ? 'Erneut speichern' : 'Tabellentipp speichern'} onPress={save} disabled={saveState === 'saving'} />}
-    {saveState !== 'idle' && <Text accessibilityRole="alert" style={[styles.tableSaveFeedback, saveState === 'error' && styles.saveError]}>{saveMessage}</Text>}
+  return <>
+    <Segment options={[['live', 'Live-Tabelle'], ['prediction', 'Mein Tabellentipp']]} value={view} onChange={setView} />
+    {view === 'live' ? <>
+      <Text style={styles.sectionHint}>Aktueller Stand der Hauptrunde. Die Tabelle wird beim Öffnen der App aktualisiert.</Text>
+      <View style={styles.liveTableHeader}><Text style={styles.liveTableRank}>#</Text><Text style={styles.liveTableTeam}>TEAM</Text><Text style={styles.liveTableStats}>SP</Text><Text style={styles.liveTableStats}>TORE</Text><Text style={styles.liveTablePoints}>P</Text></View>
+      {liveStandings.map(standing => <View key={standing.team.id} style={styles.liveTableRow}>
+        <Text style={styles.liveTableRank}>{standing.position}</Text><TeamLogo team={standing.team} /><Text numberOfLines={1} style={styles.liveTableTeam}>{standing.team.name}</Text><Text style={styles.liveTableStats}>{standing.gamesPlayed}</Text><Text style={styles.liveTableStats}>{standing.goalsFor}:{standing.goalsAgainst}</Text><Text style={styles.liveTablePoints}>{standing.points}</Text>
+      </View>)}
+      {!liveStandings.length && <Empty text="Die Live-Tabelle wird gerade geladen. Bitte aktualisiere die Daten in wenigen Sekunden noch einmal." />}
+    </> : <>
+      <View style={styles.deadline}><Text style={styles.deadlineLabel}>{open ? 'ABGABE BIS' : 'ABGABE BEENDET'}</Text><Text style={styles.deadlineValue}>{deadline} Uhr</Text></View><Text style={styles.sectionHint}>Sortiere alle Teams auf ihre erwartete Abschlussposition. Pro Team gibt es bei {teams.length} Teams maximal {teams.length} Punkte; jeder Platz Abweichung kostet einen Punkt.</Text>
+      {ordered.map((team, i) => <View key={team.id} style={styles.teamRank}><Text style={styles.rankNo}>{i + 1}</Text><TeamLogo team={team} /><Text style={styles.teamName}>{team.name}</Text>{open && <View style={styles.arrows}><Pressable onPress={() => move(i, -1)}><Text style={styles.arrow}>↑</Text></Pressable><Pressable onPress={() => move(i, 1)}><Text style={styles.arrow}>↓</Text></Pressable></View>}</View>)}
+      {open && <Button label={saveState === 'saving' ? 'Speichert …' : saveState === 'saved' ? 'Erneut speichern' : 'Tabellentipp speichern'} onPress={save} disabled={saveState === 'saving'} />}
+      {saveState !== 'idle' && <Text accessibilityRole="alert" style={[styles.tableSaveFeedback, saveState === 'error' && styles.saveError]}>{saveMessage}</Text>}
+    </>}
   </>;
 }
 
@@ -753,6 +783,12 @@ const styles = StyleSheet.create({
   passwordResetLink: { color: c.lime, textAlign: 'center', paddingTop: 18, fontWeight: '800' },
   authHelpLinks: { alignItems: 'center' },
   tableSaveFeedback: { color: c.lime, textAlign: 'center', marginTop: 12, fontSize: 12, fontWeight: '800', lineHeight: 18 },
+  liveTableHeader: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.line, paddingHorizontal: 8, paddingBottom: 7 },
+  liveTableRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.line, paddingVertical: 9, gap: 8 },
+  liveTableRank: { color: c.muted, width: 20, textAlign: 'center', fontSize: 12, fontWeight: '900' },
+  liveTableTeam: { color: c.ink, flex: 1, minWidth: 0, fontSize: 12, fontWeight: '800' },
+  liveTableStats: { color: c.muted, width: 40, textAlign: 'center', fontSize: 11, fontWeight: '800' },
+  liveTablePoints: { color: c.lime, width: 24, textAlign: 'right', fontSize: 15, fontWeight: '900' },
   adminCard: { borderColor: '#607f2b' },
   adminLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginTop: 18, marginBottom: 8 },
   adminUserList: { gap: 8, paddingRight: 10 },
