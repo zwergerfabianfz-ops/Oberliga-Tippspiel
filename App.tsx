@@ -601,7 +601,7 @@ function PlayerTipsModal({ player, onClose }: { player: LeaderboardEntry | null;
       <Text style={styles.muted}>Nur bereits beendete Spiele werden angezeigt.</Text>
       <Segment options={[['3', '3 Punkte'], ['2', '2 Punkte'], ['1', '1 Punkt'], ['0', '0 Punkte']]} value={points} onChange={setPoints} />
       {loading ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : <ScrollView contentContainerStyle={styles.modalTips}>
-        <View style={styles.pointsSummary}><Text style={styles.pointsSummaryCount}>{shownTips.length}</Text><Text style={styles.pointsSummaryLabel}>{shownTips.length === 1 ? 'Spiel' : 'Spiele'} mit {points} {pointsLabel}</Text></View>
+        <View style={styles.pointsSummary}><Text style={styles.pointsSummaryCount}>{shownTips.length}</Text><Text style={styles.pointsSummaryLabel}>{shownTips.length === 1 ? 'Spiel' : 'Spiele'}</Text></View>
         {shownTips.map(tip => <View key={tip.gameId} style={styles.playerTipRow}>
           <Text style={styles.playerTipDate}>{formatGameDate(tip.startsAt)}</Text><Text style={styles.playerTipTeams}>{tip.homeTeamName} – {tip.awayTeamName}</Text>
           <View style={styles.playerTipScores}><Text style={styles.playerTipScore}>Tipp {tip.predictedHome}:{tip.predictedAway}</Text><Text style={styles.playerTipActual}>Endstand {tip.homeScore}:{tip.awayScore}</Text><Text style={styles.playerTipPoints}>{tip.points} P</Text></View>
