@@ -24,7 +24,7 @@ import { liveClockLabel } from './src/liveGame';
 import { isOfficiallyLive } from './src/liveStatus';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
-import { isTipOpen } from './src/scoring';
+import { isAllowedGameTip, isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
 import type { Game, LeaderboardEntry, LiveStanding, RecentPrediction, Season, Team } from './src/types';
 
@@ -364,7 +364,7 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   const shownTips = shown.filter(game => !game.isLive);
   const save = useCallback(async (game: Game, home: string, away: string): Promise<boolean> => {
     const h = Number(home), a = Number(away);
-    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return false;
+    if (!isAllowedGameTip(h, a)) return false;
     if (!isTipOpen(game.startsAt)) { Alert.alert('Tipp geschlossen', 'Das Spiel hat bereits begonnen.'); return false; }
     if (session) {
       const { error } = await supabase.rpc('save_game_prediction', { p_game_id: game.id, p_home: h, p_away: a });
@@ -405,12 +405,16 @@ function LiveGameCard({ game }: { game: Game }) {
 function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => Promise<boolean> }) {
   const [home, setHome] = useState(game.predictedHome?.toString() ?? '');
   const [away, setAway] = useState(game.predictedAway?.toString() ?? '');
-  const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(game.predictedHome === null ? 'idle' : 'saved');
+  const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'draw'>(game.predictedHome === null ? 'idle' : 'saved');
   const lastSaved = useRef(game.predictedHome === null || game.predictedAway === null ? '' : `${game.predictedHome}:${game.predictedAway}`);
   const open = isTipOpen(game.startsAt);
   useEffect(() => {
     if (!open || !/^\d{1,2}$/.test(home) || !/^\d{1,2}$/.test(away) || Number(home) > 30 || Number(away) > 30) {
       setSaveState('idle');
+      return;
+    }
+    if (Number(home) === Number(away)) {
+      setSaveState('draw');
       return;
     }
     const value = `${Number(home)}:${Number(away)}`;
@@ -435,7 +439,7 @@ function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a
     <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, !open && styles.closed, game.isLive && styles.live]}>{gameState}</Text></View>
     <View style={styles.matchRow}><TeamBlock team={game.homeTeam} /><View style={styles.scoreInputs}><ScoreInput value={home} onChange={setHome} disabled={!open} /><Text style={styles.colon}>:</Text><ScoreInput value={away} onChange={setAway} disabled={!open} /></View><TeamBlock team={game.awayTeam} /></View>
     {game.homeScore !== null && <Text style={[styles.result, game.isLive && styles.liveText]}>{game.isLive ? 'Live' : 'Endstand'} {game.homeScore}:{game.awayScore}{game.isFinal ? game.phase === 'preseason' ? ' · ohne Wertung' : ` · ${game.points ?? 0} Punkte` : ''}</Text>}
-    {open && saveState !== 'idle' && <Text style={[styles.saveStatus, saveState === 'error' && styles.saveError]}>{saveState === 'saved' ? '✓ Gespeichert' : saveState === 'error' ? 'Nicht gespeichert' : saveState === 'saving' ? 'Speichert …' : 'Wird gespeichert …'}</Text>}
+    {open && saveState !== 'idle' && <Text style={[styles.saveStatus, (saveState === 'error' || saveState === 'draw') && styles.saveError]}>{saveState === 'saved' ? '✓ Gespeichert' : saveState === 'draw' ? 'Unentschieden sind im Eishockey nicht möglich.' : saveState === 'error' ? 'Nicht gespeichert' : saveState === 'saving' ? 'Speichert …' : 'Wird gespeichert …'}</Text>}
   </View>;
 }
 
@@ -701,8 +705,8 @@ function AdminGameTip({ game, prediction, userId, onSaved }: { game: Game; predi
   const date = new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
   async function save() {
     const h = Number(home), a = Number(away);
-    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) {
-      setFeedback('Bitte 0 bis 30 Tore eintragen.');
+    if (!isAllowedGameTip(h, a)) {
+      setFeedback(h === a ? 'Unentschieden sind im Eishockey nicht möglich.' : 'Bitte 0 bis 30 Tore eintragen.');
       return;
     }
     setBusy(true);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTipOpen, scoreGameTip, scoreTablePosition } from './scoring';
+import { isAllowedGameTip, isTipOpen, scoreGameTip, scoreTablePosition } from './scoring';
 
 describe('scoreGameTip', () => {
   it.each([
@@ -22,4 +22,10 @@ describe('scoreTablePosition', () => {
 it('sperrt einen Tipp exakt zum Spielbeginn', () => {
   expect(isTipOpen('2026-09-20T18:00:00Z', new Date('2026-09-20T17:59:59Z'))).toBe(true);
   expect(isTipOpen('2026-09-20T18:00:00Z', new Date('2026-09-20T18:00:00Z'))).toBe(false);
+});
+
+it('erlaubt keine Unentschieden als Eishockey-Tipp', () => {
+  expect(isAllowedGameTip(2, 2)).toBe(false);
+  expect(isAllowedGameTip(0, 0)).toBe(false);
+  expect(isAllowedGameTip(3, 2)).toBe(true);
 });

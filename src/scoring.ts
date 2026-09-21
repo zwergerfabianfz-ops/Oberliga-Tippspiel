@@ -25,3 +25,7 @@ export function scoreTablePosition(
 export function isTipOpen(startsAt: string, now = new Date()): boolean {
   return now.getTime() < new Date(startsAt).getTime();
 }
+
+export function isAllowedGameTip(home: number, away: number): boolean {
+  return Number.isInteger(home) && Number.isInteger(away) && home >= 0 && away >= 0 && home <= 30 && away <= 30 && home !== away;
+}
