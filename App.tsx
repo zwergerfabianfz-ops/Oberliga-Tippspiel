@@ -594,17 +594,19 @@ function PlayerTipsModal({ player, onClose }: { player: LeaderboardEntry | null;
     }).then(() => setLoading(false), () => setLoading(false));
   }, [player?.userId]);
   const shownTips = tips.filter(tip => tip.points === Number(points));
+  const pointsLabel = points === '1' ? 'Punkt' : 'Punkte';
   return <Modal visible={Boolean(player)} animationType="slide" transparent onRequestClose={onClose}>
     <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
       <View style={styles.modalHeader}><View><Text style={styles.brand}>SPIELER-TIPPS</Text><Text style={styles.modalTitle}>{player?.displayName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
       <Text style={styles.muted}>Nur bereits beendete Spiele werden angezeigt.</Text>
       <Segment options={[['3', '3 Punkte'], ['2', '2 Punkte'], ['1', '1 Punkt'], ['0', '0 Punkte']]} value={points} onChange={setPoints} />
       {loading ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : <ScrollView contentContainerStyle={styles.modalTips}>
+        <View style={styles.pointsSummary}><Text style={styles.pointsSummaryCount}>{shownTips.length}</Text><Text style={styles.pointsSummaryLabel}>{shownTips.length === 1 ? 'Spiel' : 'Spiele'} mit {points} {pointsLabel}</Text></View>
         {shownTips.map(tip => <View key={tip.gameId} style={styles.playerTipRow}>
           <Text style={styles.playerTipDate}>{formatGameDate(tip.startsAt)}</Text><Text style={styles.playerTipTeams}>{tip.homeTeamName} – {tip.awayTeamName}</Text>
           <View style={styles.playerTipScores}><Text style={styles.playerTipScore}>Tipp {tip.predictedHome}:{tip.predictedAway}</Text><Text style={styles.playerTipActual}>Endstand {tip.homeScore}:{tip.awayScore}</Text><Text style={styles.playerTipPoints}>{tip.points} P</Text></View>
         </View>)}
-        {!shownTips.length && <Empty text={`Keine Tipps mit ${points} ${points === '1' ? 'Punkt' : 'Punkten'} verfügbar.`} />}
+        {!shownTips.length && <Empty text={`Keine Tipps mit ${points} ${pointsLabel} verfügbar.`} />}
       </ScrollView>}
     </SafeAreaView></View>
   </Modal>;
@@ -909,4 +911,7 @@ const styles = StyleSheet.create({
   playerTipScore: { color: c.ink, fontSize: 12, fontWeight: '900' },
   playerTipActual: { color: c.muted, flex: 1, fontSize: 12, fontWeight: '800' },
   playerTipPoints: { color: c.lime, fontSize: 14, fontWeight: '900' },
+  pointsSummary: { alignItems: 'center', backgroundColor: c.panel2, borderLeftColor: c.lime, borderLeftWidth: 4, borderRadius: 10, flexDirection: 'row', gap: 9, marginBottom: 9, paddingHorizontal: 13, paddingVertical: 10 },
+  pointsSummaryCount: { color: c.lime, fontSize: 23, fontWeight: '900' },
+  pointsSummaryLabel: { color: c.ink, fontSize: 13, fontWeight: '800' },
 });
