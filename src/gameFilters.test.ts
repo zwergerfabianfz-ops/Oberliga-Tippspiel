@@ -7,6 +7,7 @@ const team = { id: 'team', name: 'Team', shortName: 'TEM' };
 function game(id: string, startsAt: string, isFinal = false, matchday: number | null = null): Game {
   return {
     id,
+    externalId: id,
     phase: 'regular',
     matchday,
     startsAt,

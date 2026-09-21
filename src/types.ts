@@ -21,6 +21,7 @@ export type LiveStanding = {
 
 export type Game = {
   id: string;
+  externalId: string;
   phase: 'preseason' | 'regular' | 'playoffs';
   matchday: number | null;
   startsAt: string;

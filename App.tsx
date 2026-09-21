@@ -354,6 +354,7 @@ function MainApp({ session }: { session: Session | null }) {
 function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Dispatch<SetStateAction<Game[]>>; session: Session | null }) {
   const [phase, setPhase] = useState<Game['phase']>('regular');
   const [scope, setScope] = useState<'next' | 'all'>('next');
+  const [liveGameDetails, setLiveGameDetails] = useState<Game | null>(null);
   const preseasonVisible = arePreseasonGamesVisible(games);
   const phases: Game['phase'][] = preseasonVisible ? ['regular', 'preseason', 'playoffs'] : ['regular', 'playoffs'];
   useEffect(() => {
@@ -379,7 +380,7 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   return <>
     {liveGames.length > 0 && <View style={styles.liveSection}>
       <Text style={styles.liveSectionTitle}>● LIVE-SPIELE</Text>
-      {liveGames.map(game => <LiveGameCard key={game.id} game={game} />)}
+      {liveGames.map(game => <LiveGameCard key={game.id} game={game} onPress={() => setLiveGameDetails(game)} />)}
     </View>}
     <View style={styles.filterRow}>
       <FilterButton label="Phase" value={phaseLabel} onPress={nextPhase} />
@@ -388,19 +389,57 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
     <Text style={styles.sectionHint}>{phase === 'preseason' ? 'Testspiele dienen nur zum Ausprobieren und zählen nicht für die Rangliste. ' : ''}{scope === 'next' ? 'Spiele des nächsten Spieltags. Ein einzelnes vorgezogenes Spiel wird zusammen mit dem folgenden Spieltermin angezeigt. ' : ''}Tipps bleiben bis zum offiziellen Spielbeginn änderbar.</Text>
     {shownTips.map(game => <GameCard key={game.id} game={game} onSave={save} />)}
     {!shownTips.length && !liveGames.length && <Empty text={scope === 'next' ? 'Kein weiterer Spieltag in dieser Phase.' : 'Noch keine Spiele in dieser Phase.'} />}
+    <LiveGameDetailsModal game={liveGameDetails} onClose={() => setLiveGameDetails(null)} />
   </>;
 }
 
-function LiveGameCard({ game }: { game: Game }) {
+function LiveGameCard({ game, onPress }: { game: Game; onPress: () => void }) {
   const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
-  return <View style={[styles.card, styles.liveCard]}>
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Spielbericht für ${game.homeTeam.name} gegen ${game.awayTeam.name} öffnen`} onPress={onPress} style={[styles.card, styles.liveCard]}>
     <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.live]}>LIVE</Text></View>
     <View style={[styles.historyMatch, styles.liveMatch]}>
       <View style={styles.historyTeam}><TeamLogo team={game.homeTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.homeTeam.name}</Text></View>
       <View style={styles.liveScoreBlock}><Text style={styles.liveScore}>{game.homeScore ?? 0} : {game.awayScore ?? 0}</Text><Text style={styles.liveMinute}>{liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text><Text style={styles.liveScoreLabel}>AKTUELLER STAND</Text></View>
       <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
     </View>
-  </View>;
+    <Text style={styles.liveDetailsHint}>Spielbericht anzeigen ›</Text>
+  </Pressable>;
+}
+
+type LiveEvent = { id: string; type: 'goal' | 'penalty'; team: 'home' | 'away'; seconds: number; time: string; period: string; player: string; score: string; detail: string; strength: string };
+
+function LiveGameDetailsModal({ game, onClose }: { game: Game | null; onClose: () => void }) {
+  const [events, setEvents] = useState<LiveEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    if (!game) return;
+    setLoading(true); setError(null);
+    const { data, error: fetchError } = await supabase.functions.invoke('sync-deb', { body: { gameId: game.externalId } });
+    if (fetchError) { setError('Der Spielbericht konnte gerade nicht geladen werden.'); setLoading(false); return; }
+    setEvents(Array.isArray(data?.events) ? data.events : []);
+    setLoading(false);
+  }, [game]);
+  useEffect(() => {
+    if (!game) { setEvents([]); setError(null); return; }
+    load();
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, [game, load]);
+  if (!game) return null;
+  return <Modal transparent animationType="slide" visible onRequestClose={onClose}>
+    <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
+      <View style={styles.modalHeader}><View><Text style={styles.brand}>LIVE-SPIELBERICHT</Text><Text style={styles.modalTitle}>{game.homeTeam.shortName} – {game.awayTeam.shortName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
+      <Text style={styles.modalSubtitle}>{game.homeScore ?? 0} : {game.awayScore ?? 0} · {liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text>
+      {loading && !events.length ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : error ? <Text style={styles.modalError}>{error}</Text> : <ScrollView contentContainerStyle={styles.liveEvents}>
+        {!events.length ? <Text style={styles.muted}>Noch keine Tore oder Strafen erfasst.</Text> : events.map(event => <View key={event.id} style={styles.liveEvent}>
+          <Text style={[styles.liveEventTime, event.type === 'goal' ? styles.goalEvent : styles.penaltyEvent]}>{event.time}</Text>
+          <View style={styles.liveEventMain}><Text style={styles.liveEventTitle}>{event.type === 'goal' ? 'TOR' : 'STRAFE'} · {event.team === 'home' ? game.homeTeam.name : game.awayTeam.name}</Text><Text style={styles.liveEventPlayer}>{event.player || 'Unbekannter Spieler'}</Text>{Boolean(event.detail) && <Text style={styles.liveEventDetail}>{event.type === 'goal' ? `Vorlagen: ${event.detail}` : event.detail}</Text>}</View>
+          <Text style={styles.liveEventResult}>{event.type === 'goal' ? event.score : event.strength}</Text>
+        </View>)}</ScrollView>}
+      {loading && events.length > 0 && <ActivityIndicator color={c.lime} style={styles.modalRefreshing} />}
+    </SafeAreaView></View>
+  </Modal>;
 }
 
 function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => Promise<boolean> }) {
@@ -787,7 +826,7 @@ function scoreTip(predictedHome: number, predictedAway: number, actualHome: numb
 function mapRank(row: any): LeaderboardEntry { return { userId: row.user_id, rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
 function mapPlayerFinalTip(row: any): PlayerFinalTip { return { gameId: row.game_id, startsAt: row.starts_at, homeTeamName: row.home_team_name, awayTeamName: row.away_team_name, predictedHome: Number(row.predicted_home), predictedAway: Number(row.predicted_away), homeScore: Number(row.home_score), awayScore: Number(row.away_score), points: Number(row.points) }; }
 function formatGameDate(startsAt: string) { return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Berlin' }).format(new Date(startsAt)); }
-function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: isOfficiallyLive(row.is_live === true, row.starts_at), isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
+function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, externalId: row.external_id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: isOfficiallyLive(row.is_live === true, row.starts_at), isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
 const c = { bg: '#071426', panel: '#0d2038', panel2: '#122a48', ink: '#f4f8fc', muted: '#8fa3b9', lime: '#b8f341', blue: '#2f80ed', red: '#ff6b6b', line: '#203a58' };
@@ -815,6 +854,7 @@ const styles = StyleSheet.create({
   liveScore: { color: '#ff5a52', fontSize: 25, fontWeight: '900', textAlign: 'center' },
   liveMinute: { color: c.ink, fontSize: 11, fontWeight: '900', marginTop: 4, textAlign: 'center' },
   liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
+  liveDetailsHint: { color: c.lime, fontSize: 11, fontWeight: '900', letterSpacing: .3, marginTop: 12, textAlign: 'center' },
   profileHint: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 7 },
   authFeedback: { marginTop: 13, padding: 11, borderRadius: 9, fontSize: 13, fontWeight: '700', lineHeight: 18 },
   authFeedbackError: { color: '#ffd4d4', backgroundColor: '#421c27' },
@@ -849,6 +889,19 @@ const styles = StyleSheet.create({
   modalCloseText: { color: c.ink, fontSize: 26, fontWeight: '500', lineHeight: 29 },
   modalLoading: { marginTop: 30 },
   modalTips: { paddingBottom: 24 },
+  modalSubtitle: { color: c.muted, fontSize: 14, fontWeight: '800', marginBottom: 12 },
+  modalError: { color: c.red, fontSize: 14, fontWeight: '700', marginTop: 20 },
+  modalRefreshing: { marginVertical: 8 },
+  liveEvents: { paddingBottom: 24 },
+  liveEvent: { alignItems: 'flex-start', borderBottomColor: c.line, borderBottomWidth: 1, flexDirection: 'row', gap: 10, paddingVertical: 13 },
+  liveEventTime: { fontSize: 13, fontWeight: '900', paddingTop: 2, width: 42 },
+  goalEvent: { color: c.lime },
+  penaltyEvent: { color: '#ffb452' },
+  liveEventMain: { flex: 1 },
+  liveEventTitle: { color: c.ink, fontSize: 12, fontWeight: '900' },
+  liveEventPlayer: { color: c.ink, fontSize: 15, fontWeight: '800', marginTop: 2 },
+  liveEventDetail: { color: c.muted, fontSize: 12, marginTop: 2 },
+  liveEventResult: { color: c.ink, fontSize: 13, fontWeight: '900', paddingTop: 2, textAlign: 'right', width: 55 },
   playerTipRow: { borderBottomColor: c.line, borderBottomWidth: 1, paddingVertical: 13 },
   playerTipDate: { color: c.muted, fontSize: 11, fontWeight: '800' },
   playerTipTeams: { color: c.ink, fontSize: 13, fontWeight: '800', marginTop: 3 },

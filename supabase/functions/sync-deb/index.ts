@@ -35,6 +35,16 @@ type HockeyDataStanding = {
   points?: number;
 };
 
+type HockeyDataPlayer = { playerFirstname?: string; playerLastname?: string; playerJerseyNr?: number | null };
+type HockeyDataGameReport = {
+  homeGoals?: HockeyDataGoal[];
+  awayGoals?: HockeyDataGoal[];
+  homePenalties?: HockeyDataPenalty[];
+  awayPenalties?: HockeyDataPenalty[];
+};
+type HockeyDataGoal = { guid: string; gameTime?: number; gameTimeFormatted?: string; gameTimePeriod?: string; scoredBy?: HockeyDataPlayer | null; assistBy?: HockeyDataPlayer | null; assist2By?: HockeyDataPlayer | null; newScore?: string; gameStrength?: string | null };
+type HockeyDataPenalty = { guid: string; gameTime?: number; gameTimeFormatted?: string; gameTimePeriod?: string; offender?: HockeyDataPlayer | null; offence?: string | null; penaltyLength?: number | null };
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -46,6 +56,12 @@ const PRESEASON_DIVISION_ID = 'deb_ol_fs';
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+
+  let requestedGameId: string | null = null;
+  try {
+    const body = await req.json();
+    if (typeof body?.gameId === 'string') requestedGameId = body.gameId;
+  } catch { /* The regular sync has no request body. */ }
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const authorization = req.headers.get('Authorization') ?? '';
@@ -63,12 +79,26 @@ Deno.serve(async req => {
     supabase.from('games').select('updated_at').eq('season_id', season.id).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('games').select('id', { count: 'exact', head: true }).eq('season_id', season.id).eq('is_preseason', true),
   ]);
-  if ((preseasonCount ?? 0) > 0 && latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 12_000) {
+  if (!requestedGameId && (preseasonCount ?? 0) > 0 && latestGame && Date.now() - new Date(latestGame.updated_at).getTime() < 12_000) {
     return json({ skipped: true, reason: 'recently-synced' });
   }
 
   const apiKey = Deno.env.get('HOCKEYDATA_API_KEY') ?? await discoverPublicApiKey();
   if (!apiKey) return json({ error: 'Kein HockeyData-Key auf der DEB-Seite gefunden.' }, 503);
+  if (requestedGameId) {
+    try {
+      const isPreseasonRequest = requestedGameId.startsWith('preseason:');
+      const divisionId = isPreseasonRequest ? PRESEASON_DIVISION_ID : season.external_division_id;
+      const hockeyDataGameId = isPreseasonRequest ? requestedGameId.slice('preseason:'.length) : requestedGameId;
+      const schedule = await fetchSchedule(apiKey, divisionId);
+      const game = schedule.find(row => row.id === hockeyDataGameId);
+      if (!game) return json({ error: 'Spiel nicht gefunden.' }, 404);
+      const report = await fetchGameReport(apiKey, divisionId, hockeyDataGameId);
+      return json({ gameId: requestedGameId, events: gameEvents(report) });
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : 'Spielbericht konnte nicht geladen werden.' }, 502);
+    }
+  }
   let rows: HockeyDataRow[];
   let preseasonRows: HockeyDataRow[];
   let standings: HockeyDataStanding[];
@@ -202,6 +232,39 @@ async function fetchStandings(apiKey: string, divisionId: string): Promise<Hocke
   const payload = await response.json();
   if (!response.ok || payload.statusId <= 0) throw new Error(payload.statusMsg ?? `Tabellenabruf für ${divisionId} fehlgeschlagen`);
   return payload.data?.rows ?? [];
+}
+
+async function fetchGameReport(apiKey: string, divisionId: string, gameId: string): Promise<HockeyDataGameReport> {
+  const endpoint = new URL('https://api.hockeydata.net/data/ebel/GetGameReport');
+  endpoint.searchParams.set('apiKey', apiKey);
+  endpoint.searchParams.set('referer', 'deb-online.live');
+  endpoint.searchParams.set('lang', 'de');
+  endpoint.searchParams.set('divisionId', divisionId);
+  endpoint.searchParams.set('gameId', gameId);
+  endpoint.searchParams.set('widgetOptions', JSON.stringify({ semantic: true }));
+  const response = await fetch(endpoint);
+  const payload = await response.json();
+  if (!response.ok || payload.statusId <= 0) throw new Error(payload.statusMsg ?? 'Spielbericht konnte nicht geladen werden.');
+  return payload.data ?? {};
+}
+
+function gameEvents(report: HockeyDataGameReport) {
+  const goals = (items: HockeyDataGoal[] | undefined, team: 'home' | 'away') => (items ?? []).map(item => ({
+    id: item.guid, type: 'goal', team, seconds: item.gameTime ?? 0, time: item.gameTimeFormatted ?? '–', period: item.gameTimePeriod ?? '',
+    player: playerName(item.scoredBy), score: item.newScore ?? '', detail: [playerName(item.assistBy), playerName(item.assist2By)].filter(Boolean).join(', '), strength: item.gameStrength ?? '',
+  }));
+  const penalties = (items: HockeyDataPenalty[] | undefined, team: 'home' | 'away') => (items ?? []).map(item => ({
+    id: item.guid, type: 'penalty', team, seconds: item.gameTime ?? 0, time: item.gameTimeFormatted ?? '–', period: item.gameTimePeriod ?? '',
+    player: playerName(item.offender), score: '', detail: item.offence ?? 'Strafe', strength: item.penaltyLength ? `${Math.round(item.penaltyLength / 60)} Min.` : '',
+  }));
+  return [...goals(report.homeGoals, 'home'), ...goals(report.awayGoals, 'away'), ...penalties(report.homePenalties, 'home'), ...penalties(report.awayPenalties, 'away')]
+    .sort((a, b) => a.seconds - b.seconds);
+}
+
+function playerName(player?: HockeyDataPlayer | null) {
+  if (!player) return '';
+  const name = [player.playerFirstname, player.playerLastname].filter(Boolean).join(' ');
+  return player.playerJerseyNr ? `#${player.playerJerseyNr} ${name}` : name;
 }
 
 async function discoverPublicApiKey() {
