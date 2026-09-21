@@ -5,6 +5,7 @@ import {
   Alert,
   Image,
   Linking,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -26,7 +27,7 @@ import { disablePushNotifications, enablePushNotifications, pushNotificationsEna
 import { configurePwa } from './src/pwa';
 import { isAllowedGameTip, isTipOpen } from './src/scoring';
 import { isBackendConfigured, supabase } from './src/supabase';
-import type { Game, LeaderboardEntry, LiveStanding, RecentPrediction, Season, Team } from './src/types';
+import type { Game, LeaderboardEntry, LiveStanding, PlayerFinalTip, RecentPrediction, Season, Team } from './src/types';
 
 type Tab = 'spiele' | 'verlauf' | 'tabelle' | 'rangliste' | 'profil';
 type AuthNotice = { kind: 'success' | 'error'; message: string };
@@ -531,11 +532,43 @@ function TableTipScreen({ season, teams, liveStandings, session, onSaved }: { se
 
 function RankingScreen({ games, table, season }: { games: LeaderboardEntry[]; table: LeaderboardEntry[]; season: Season }) {
   const [type, setType] = useState<'games' | 'table'>('games');
+  const [selectedPlayer, setSelectedPlayer] = useState<LeaderboardEntry | null>(null);
   const entries = type === 'games' ? games : table;
   return <><Segment options={[['games', 'Spielt Tipps'], ['table', 'Tabellentipps']]} value={type} onChange={setType} /><Text style={styles.sectionHint}>{type === 'games' ? '3 Punkte exakt · 2 Tordifferenz · 1 Sieger' : season.status === 'finished' ? 'Auswertung der Abschlusspositionen' : 'Wird nach Ende der Hauptrunde veröffentlicht.'}</Text>
-    {entries.map(entry => <View key={`${entry.rank}-${entry.displayName}`} style={styles.rankingRow}><Text style={[styles.rankNo, entry.rank <= 3 && styles.active]}>{entry.rank}</Text><Text style={styles.rankingName}>{entry.displayName}</Text>{entry.exactTips !== undefined && <Text style={styles.exacts}>{entry.exactTips} exakt</Text>}<Text style={styles.points}>{entry.points} P</Text></View>)}
+    {entries.map(entry => <Pressable key={`${entry.rank}-${entry.displayName}`} disabled={type !== 'games' || !entry.userId} onPress={() => setSelectedPlayer(entry)} style={styles.rankingRow}><Text style={[styles.rankNo, entry.rank <= 3 && styles.active]}>{entry.rank}</Text><Text style={styles.rankingName}>{entry.displayName}</Text>{entry.exactTips !== undefined && <Text style={styles.exacts}>{entry.exactTips} exakt</Text>}<Text style={styles.points}>{entry.points} P</Text></Pressable>)}
     {!entries.length && <Empty text="Die Auswertung erscheint nach Ende der Hauptrunde." />}
+    <PlayerTipsModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />
   </>;
+}
+
+function PlayerTipsModal({ player, onClose }: { player: LeaderboardEntry | null; onClose: () => void }) {
+  const [tips, setTips] = useState<PlayerFinalTip[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [points, setPoints] = useState<'3' | '2' | '1' | '0'>('3');
+  useEffect(() => {
+    if (!player?.userId) { setTips([]); return; }
+    setLoading(true);
+    setPoints('3');
+    supabase.rpc('player_final_game_predictions', { p_user_id: player.userId }).then(({ data, error }) => {
+      if (error) Alert.alert('Tipps nicht geladen', error.message);
+      else setTips((data ?? []).map(mapPlayerFinalTip));
+    }).then(() => setLoading(false), () => setLoading(false));
+  }, [player?.userId]);
+  const shownTips = tips.filter(tip => tip.points === Number(points));
+  return <Modal visible={Boolean(player)} animationType="slide" transparent onRequestClose={onClose}>
+    <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
+      <View style={styles.modalHeader}><View><Text style={styles.brand}>SPIELER-TIPPS</Text><Text style={styles.modalTitle}>{player?.displayName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
+      <Text style={styles.muted}>Nur bereits beendete Spiele werden angezeigt.</Text>
+      <Segment options={[['3', '3 Punkte'], ['2', '2 Punkte'], ['1', '1 Punkt'], ['0', '0 Punkte']]} value={points} onChange={setPoints} />
+      {loading ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : <ScrollView contentContainerStyle={styles.modalTips}>
+        {shownTips.map(tip => <View key={tip.gameId} style={styles.playerTipRow}>
+          <Text style={styles.playerTipDate}>{formatGameDate(tip.startsAt)}</Text><Text style={styles.playerTipTeams}>{tip.homeTeamName} – {tip.awayTeamName}</Text>
+          <View style={styles.playerTipScores}><Text style={styles.playerTipScore}>Tipp {tip.predictedHome}:{tip.predictedAway}</Text><Text style={styles.playerTipActual}>Endstand {tip.homeScore}:{tip.awayScore}</Text><Text style={styles.playerTipPoints}>{tip.points} P</Text></View>
+        </View>)}
+        {!shownTips.length && <Empty text={`Keine Tipps mit ${points} ${points === '1' ? 'Punkt' : 'Punkten'} verfügbar.`} />}
+      </ScrollView>}
+    </SafeAreaView></View>
+  </Modal>;
 }
 
 function ProfileScreen({ session, games, onRefresh }: { session: Session | null; games: Game[]; onRefresh: () => void }) {
@@ -751,7 +784,9 @@ function scoreTip(predictedHome: number, predictedAway: number, actualHome: numb
   if (predictedHome - predictedAway === actualHome - actualAway) return 2;
   return Math.sign(predictedHome - predictedAway) === Math.sign(actualHome - actualAway) ? 1 : 0;
 }
-function mapRank(row: any): LeaderboardEntry { return { rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
+function mapRank(row: any): LeaderboardEntry { return { userId: row.user_id, rank: Number(row.rank), displayName: row.display_name, points: Number(row.points), exactTips: row.exact_tips === undefined ? undefined : Number(row.exact_tips) }; }
+function mapPlayerFinalTip(row: any): PlayerFinalTip { return { gameId: row.game_id, startsAt: row.starts_at, homeTeamName: row.home_team_name, awayTeamName: row.away_team_name, predictedHome: Number(row.predicted_home), predictedAway: Number(row.predicted_away), homeScore: Number(row.home_score), awayScore: Number(row.away_score), points: Number(row.points) }; }
+function formatGameDate(startsAt: string) { return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Berlin' }).format(new Date(startsAt)); }
 function mapGame(row: any, teamsById: Map<string, Team>): Game { return { id: row.id, phase: row.is_preseason ? 'preseason' : row.phase, matchday: row.matchday ?? null, startsAt: row.starts_at, homeTeam: teamsById.get(row.home_team_id) ?? { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name }, awayTeam: teamsById.get(row.away_team_id) ?? { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name }, homeScore: row.home_score, awayScore: row.away_score, isLive: isOfficiallyLive(row.is_live === true, row.starts_at), isFinal: row.is_final ?? false, liveElapsedSeconds: row.live_elapsed_seconds ?? null, livePhase: row.live_phase ?? null, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.prediction_points }; }
 function mapRecentPrediction(row: any): RecentPrediction { return { gameId: row.game_id, startsAt: row.starts_at, homeTeam: { id: row.home_team_id, name: row.home_team_name, shortName: row.home_team_short_name, logoUrl: row.home_team_logo_url }, awayTeam: { id: row.away_team_id, name: row.away_team_name, shortName: row.away_team_short_name, logoUrl: row.away_team_logo_url }, homeScore: row.home_score, awayScore: row.away_score, isLive: row.is_live ?? false, isFinal: row.is_final ?? false, displayName: row.display_name, predictedHome: row.predicted_home, predictedAway: row.predicted_away, points: row.points }; }
 
@@ -806,4 +841,19 @@ const styles = StyleSheet.create({
   adminScoreRow: { alignItems: 'center', flexDirection: 'row', marginTop: 10 },
   adminSave: { backgroundColor: c.lime, borderRadius: 9, marginLeft: 10, paddingHorizontal: 11, paddingVertical: 11 },
   adminSaveText: { color: c.bg, fontSize: 11, fontWeight: '900' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0, 0, 0, .6)', justifyContent: 'flex-end' },
+  modalSheet: { maxHeight: '88%', backgroundColor: c.bg, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20 },
+  modalHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  modalTitle: { color: c.ink, fontSize: 25, fontWeight: '900', marginTop: 3 },
+  modalClose: { alignItems: 'center', backgroundColor: c.panel2, borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  modalCloseText: { color: c.ink, fontSize: 26, fontWeight: '500', lineHeight: 29 },
+  modalLoading: { marginTop: 30 },
+  modalTips: { paddingBottom: 24 },
+  playerTipRow: { borderBottomColor: c.line, borderBottomWidth: 1, paddingVertical: 13 },
+  playerTipDate: { color: c.muted, fontSize: 11, fontWeight: '800' },
+  playerTipTeams: { color: c.ink, fontSize: 13, fontWeight: '800', marginTop: 3 },
+  playerTipScores: { alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 8 },
+  playerTipScore: { color: c.ink, fontSize: 12, fontWeight: '900' },
+  playerTipActual: { color: c.muted, flex: 1, fontSize: 12, fontWeight: '800' },
+  playerTipPoints: { color: c.lime, fontSize: 14, fontWeight: '900' },
 });

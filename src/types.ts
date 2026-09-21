@@ -53,8 +53,21 @@ export type RecentPrediction = {
 };
 
 export type LeaderboardEntry = {
+  userId?: string;
   rank: number;
   displayName: string;
   points: number;
   exactTips?: number;
+};
+
+export type PlayerFinalTip = {
+  gameId: string;
+  startsAt: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  predictedHome: number;
+  predictedAway: number;
+  homeScore: number;
+  awayScore: number;
+  points: number;
 };
