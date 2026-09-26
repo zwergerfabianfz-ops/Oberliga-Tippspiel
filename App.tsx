@@ -256,9 +256,10 @@ function MainApp({ session }: { session: Session | null }) {
   const load = useCallback(async (showSpinner = true) => {
     if (!session) return;
     if (showSpinner) setRefreshing(true);
-    const [{ data: seasonRows }, { data: gameRows }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
+    const [{ data: seasonRows }, { data: gameRows }, { data: gameExternalIds }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
       supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1),
       supabase.from('games_with_my_predictions').select('*').order('starts_at'),
+      supabase.from('games').select('id,external_id'),
       supabase.rpc('game_leaderboard'), supabase.rpc('table_leaderboard'),
       supabase.rpc('recent_game_predictions'),
     ]);
@@ -307,7 +308,8 @@ function MainApp({ session }: { session: Session | null }) {
         }] : [];
       }));
     }
-    setGames((gameRows ?? []).map(row => mapGame(row, teamsById)));
+    const externalIdByGameId = new Map((gameExternalIds ?? []).map(game => [game.id, game.external_id]));
+    setGames((gameRows ?? []).map(row => mapGame({ ...row, external_id: row.external_id ?? externalIdByGameId.get(row.id) }, teamsById)));
     setRefreshing(false);
   }, [session]);
 
