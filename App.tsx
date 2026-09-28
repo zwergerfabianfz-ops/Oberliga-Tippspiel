@@ -434,14 +434,25 @@ function LiveGameDetailsModal({ game, onClose }: { game: Game | null; onClose: (
       <View style={styles.modalHeader}><View><Text style={styles.brand}>LIVE-SPIELBERICHT</Text><Text style={styles.modalTitle}>{game.homeTeam.shortName} – {game.awayTeam.shortName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
       <Text style={styles.modalSubtitle}>{game.homeScore ?? 0} : {game.awayScore ?? 0} · {liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text>
       {loading && !events.length ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : error ? <Text style={styles.modalError}>{error}</Text> : <ScrollView contentContainerStyle={styles.liveEvents}>
-        {!events.length ? <Text style={styles.muted}>Noch keine Tore oder Strafen erfasst.</Text> : events.map(event => <View key={event.id} style={styles.liveEvent}>
-          <Text style={[styles.liveEventTime, event.type === 'goal' ? styles.goalEvent : styles.penaltyEvent]}>{event.time}</Text>
-          <View style={styles.liveEventMain}><Text style={styles.liveEventTitle}>{event.type === 'goal' ? 'TOR' : 'STRAFE'} · {event.team === 'home' ? game.homeTeam.name : game.awayTeam.name}</Text><Text style={styles.liveEventPlayer}>{event.player || 'Unbekannter Spieler'}</Text>{Boolean(event.detail) && <Text style={styles.liveEventDetail}>{event.type === 'goal' ? `Vorlagen: ${event.detail}` : event.detail}</Text>}</View>
-          <Text style={styles.liveEventResult}>{event.type === 'goal' ? event.score : event.strength}</Text>
-        </View>)}</ScrollView>}
+        {!events.length ? <Text style={styles.muted}>Noch keine Tore oder Strafen erfasst.</Text> : <>
+          <View style={styles.eventTeamsHeader}><View style={[styles.eventTeamHeading, styles.eventTeamHeadingHome]}><Text numberOfLines={1} style={styles.eventTeamName}>{game.homeTeam.name}</Text><TeamLogo team={game.homeTeam} /></View><Text style={styles.eventMinuteHeading}>MIN.</Text><View style={[styles.eventTeamHeading, styles.eventTeamHeadingAway]}><TeamLogo team={game.awayTeam} /><Text numberOfLines={1} style={styles.eventTeamName}>{game.awayTeam.name}</Text></View></View>
+          {events.map(event => <LiveEventTimelineRow key={event.id} event={event} />)}
+        </>}</ScrollView>}
       {loading && events.length > 0 && <ActivityIndicator color={c.lime} style={styles.modalRefreshing} />}
     </SafeAreaView></View>
   </Modal>;
+}
+
+function LiveEventTimelineRow({ event }: { event: LiveEvent }) {
+  const isGoal = event.type === 'goal';
+  const eventTitle = isGoal ? `TOR${event.score ? ` · ${event.score}` : ''}` : `STRAFE${event.strength ? ` · ${event.strength}` : ''}`;
+  const details = event.detail ? isGoal ? `Vorlagen: ${event.detail}` : event.detail : '';
+  const eventInfo = <View style={styles.eventInfo}><Text style={[styles.eventInfoTitle, isGoal ? styles.goalEvent : styles.penaltyEvent]}>{eventTitle}</Text><Text style={styles.eventInfoPlayer} numberOfLines={2}>{event.player || 'Unbekannter Spieler'}</Text>{Boolean(details) && <Text style={styles.eventInfoDetail} numberOfLines={2}>{details}</Text>}</View>;
+  return <View style={styles.eventTimelineRow}>
+    <View style={[styles.eventSide, styles.eventSideHome]}>{event.team === 'home' && eventInfo}</View>
+    <View style={styles.eventTimelineMiddle}><Text style={[styles.eventTimelineTime, isGoal ? styles.goalEvent : styles.penaltyEvent]}>{event.time}</Text><Text style={styles.eventTimelineIcon}>{isGoal ? '●' : '▮'}</Text></View>
+    <View style={[styles.eventSide, styles.eventSideAway]}>{event.team === 'away' && eventInfo}</View>
+  </View>;
 }
 
 function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a: string) => Promise<boolean> }) {
@@ -897,15 +908,25 @@ const styles = StyleSheet.create({
   modalError: { color: c.red, fontSize: 14, fontWeight: '700', marginTop: 20 },
   modalRefreshing: { marginVertical: 8 },
   liveEvents: { paddingBottom: 24 },
-  liveEvent: { alignItems: 'flex-start', borderBottomColor: c.line, borderBottomWidth: 1, flexDirection: 'row', gap: 10, paddingVertical: 13 },
-  liveEventTime: { fontSize: 13, fontWeight: '900', paddingTop: 2, width: 42 },
   goalEvent: { color: c.lime },
   penaltyEvent: { color: '#ffb452' },
-  liveEventMain: { flex: 1 },
-  liveEventTitle: { color: c.ink, fontSize: 12, fontWeight: '900' },
-  liveEventPlayer: { color: c.ink, fontSize: 15, fontWeight: '800', marginTop: 2 },
-  liveEventDetail: { color: c.muted, fontSize: 12, marginTop: 2 },
-  liveEventResult: { color: c.ink, fontSize: 13, fontWeight: '900', paddingTop: 2, textAlign: 'right', width: 55 },
+  eventTeamsHeader: { alignItems: 'center', borderBottomColor: c.line, borderBottomWidth: 1, flexDirection: 'row', paddingBottom: 9 },
+  eventTeamHeading: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 6, minWidth: 0 },
+  eventTeamHeadingHome: { justifyContent: 'flex-end' },
+  eventTeamHeadingAway: { justifyContent: 'flex-start' },
+  eventTeamName: { color: c.muted, flexShrink: 1, fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+  eventMinuteHeading: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, textAlign: 'center', width: 48 },
+  eventTimelineRow: { alignItems: 'stretch', borderBottomColor: c.line, borderBottomWidth: 1, flexDirection: 'row', minHeight: 70, paddingVertical: 10 },
+  eventSide: { flex: 1, justifyContent: 'center', minWidth: 0 },
+  eventSideHome: { alignItems: 'flex-end', paddingRight: 7 },
+  eventSideAway: { alignItems: 'flex-start', paddingLeft: 7 },
+  eventTimelineMiddle: { alignItems: 'center', borderLeftColor: c.line, borderLeftWidth: 1, borderRightColor: c.line, borderRightWidth: 1, justifyContent: 'center', width: 48 },
+  eventTimelineTime: { fontSize: 12, fontWeight: '900' },
+  eventTimelineIcon: { color: c.muted, fontSize: 9, marginTop: 4 },
+  eventInfo: { maxWidth: '100%' },
+  eventInfoTitle: { fontSize: 10, fontWeight: '900', textAlign: 'center' },
+  eventInfoPlayer: { color: c.ink, fontSize: 12, fontWeight: '800', marginTop: 2, textAlign: 'center' },
+  eventInfoDetail: { color: c.muted, fontSize: 10, lineHeight: 13, marginTop: 2, textAlign: 'center' },
   playerTipRow: { borderBottomColor: c.line, borderBottomWidth: 1, paddingVertical: 13 },
   playerTipDate: { color: c.muted, fontSize: 11, fontWeight: '800' },
   playerTipTeams: { color: c.ink, fontSize: 13, fontWeight: '800', marginTop: 3 },
