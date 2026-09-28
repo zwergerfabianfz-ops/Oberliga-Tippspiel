@@ -249,6 +249,7 @@ function MainApp({ session }: { session: Session | null }) {
   const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([]);
   const [tableRanking, setTableRanking] = useState<LeaderboardEntry[]>([]);
   const [recentPredictions, setRecentPredictions] = useState<RecentPrediction[]>([]);
+  const [favoriteTeamId, setFavoriteTeamId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const gamesRef = useRef<Game[]>([]);
   const liveSyncRunning = useRef(false);
@@ -256,10 +257,11 @@ function MainApp({ session }: { session: Session | null }) {
   const load = useCallback(async (showSpinner = true) => {
     if (!session) return;
     if (showSpinner) setRefreshing(true);
-    const [{ data: seasonRows }, { data: gameRows }, { data: gameExternalIds }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
+    const [{ data: seasonRows }, { data: gameRows }, { data: gameExternalIds }, { data: profile }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
       supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1),
       supabase.from('games_with_my_predictions').select('*').order('starts_at'),
       supabase.from('games').select('id,external_id'),
+      supabase.from('profiles').select('favorite_team_id').eq('id', session.user.id).maybeSingle(),
       supabase.rpc('game_leaderboard'), supabase.rpc('table_leaderboard'),
       supabase.rpc('recent_game_predictions'),
     ]);
@@ -268,6 +270,7 @@ function MainApp({ session }: { session: Session | null }) {
     if (gameRanks) setGameRanking(gameRanks.map(mapRank));
     if (tableRanks) setTableRanking(tableRanks.map(mapRank));
     if (recentRows) setRecentPredictions(recentRows.map(mapRecentPrediction));
+    setFavoriteTeamId(profile?.favorite_team_id ?? null);
     const [{ data: teamRows }, { data: standingRows }] = current ? await Promise.all([
       supabase.from('teams').select('*').eq('season_id', current.id).order('name'),
       supabase.from('team_standings').select('*').eq('season_id', current.id).order('position'),
@@ -343,17 +346,17 @@ function MainApp({ session }: { session: Session | null }) {
     <View style={styles.header}><View><Text style={styles.kicker}>{season.name}</Text><Text style={styles.title}>{titleFor(tab)}</Text></View><View style={styles.puck}><Text>🏒</Text></View></View>
     <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} refreshControl={undefined}>
       {refreshing ? <ActivityIndicator color="#b8f341" /> : null}
-      {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} />}
+      {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} favoriteTeamId={favoriteTeamId} />}
       {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
       {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} liveStandings={liveStandings} session={session} onSaved={setTeams} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
-      {tab === 'profil' && <ProfileScreen session={session} games={games} onRefresh={load} />}
+      {tab === 'profil' && <ProfileScreen session={session} games={games} teams={teams} favoriteTeamId={favoriteTeamId} onFavoriteTeamChanged={setFavoriteTeamId} onRefresh={load} />}
     </ScrollView>
     <View style={styles.nav}>{(['spiele', 'verlauf', 'tabelle', 'rangliste', 'profil'] as Tab[]).map(item => <Pressable key={item} style={styles.navItem} onPress={() => setTab(item)}><Text style={[styles.navIcon, tab === item && styles.active]}>{({ spiele: '◫', verlauf: '◷', tabelle: '≡', rangliste: '♛', profil: '●' } as const)[item]}</Text><Text style={[styles.navLabel, tab === item && styles.active]}>{item[0]!.toUpperCase() + item.slice(1)}</Text></Pressable>)}</View>
   </SafeAreaView>;
 }
 
-function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Dispatch<SetStateAction<Game[]>>; session: Session | null }) {
+function GamesScreen({ games, setGames, session, favoriteTeamId }: { games: Game[]; setGames: Dispatch<SetStateAction<Game[]>>; session: Session | null; favoriteTeamId: string | null }) {
   const [phase, setPhase] = useState<Game['phase']>('regular');
   const [scope, setScope] = useState<'next' | 'all'>('next');
   const [liveGameDetails, setLiveGameDetails] = useState<Game | null>(null);
@@ -362,7 +365,8 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   useEffect(() => {
     if (phase === 'preseason' && !preseasonVisible) setPhase('regular');
   }, [phase, preseasonVisible]);
-  const liveGames = games.filter(game => game.isLive).sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const isFavoriteGame = (game: Game) => Boolean(favoriteTeamId && (game.homeTeam.id === favoriteTeamId || game.awayTeam.id === favoriteTeamId));
+  const liveGames = games.filter(game => game.isLive).sort((a, b) => Number(isFavoriteGame(b)) - Number(isFavoriteGame(a)) || new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   const phaseGames = games.filter(game => game.phase === phase);
   const shown = scope === 'next' ? gamesForNextMatchday(phaseGames) : phaseGames;
   const shownTips = shown.filter(game => !game.isLive);
@@ -382,7 +386,7 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   return <>
     {liveGames.length > 0 && <View style={styles.liveSection}>
       <Text style={styles.liveSectionTitle}>● LIVE-SPIELE</Text>
-      {liveGames.map(game => <LiveGameCard key={game.id} game={game} onPress={() => setLiveGameDetails(game)} />)}
+      {liveGames.map(game => <LiveGameCard key={game.id} game={game} isFavorite={isFavoriteGame(game)} onPress={() => setLiveGameDetails(game)} />)}
     </View>}
     <View style={styles.filterRow}>
       <FilterButton label="Phase" value={phaseLabel} onPress={nextPhase} />
@@ -395,10 +399,10 @@ function GamesScreen({ games, setGames, session }: { games: Game[]; setGames: Di
   </>;
 }
 
-function LiveGameCard({ game, onPress }: { game: Game; onPress: () => void }) {
+function LiveGameCard({ game, isFavorite, onPress }: { game: Game; isFavorite: boolean; onPress: () => void }) {
   const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
   return <Pressable accessibilityRole="button" accessibilityLabel={`Spielbericht für ${game.homeTeam.name} gegen ${game.awayTeam.name} öffnen`} onPress={onPress} style={[styles.card, styles.liveCard]}>
-    <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.live]}>LIVE</Text></View>
+    <View style={styles.cardTop}><View>{isFavorite && <Text style={styles.favoriteLiveLabel}>DEIN LIEBLINGSTEAM</Text>}<Text style={styles.date}>{date} Uhr</Text></View><Text style={[styles.state, styles.live]}>LIVE</Text></View>
     <View style={[styles.historyMatch, styles.liveMatch]}>
       <View style={styles.historyTeam}><TeamLogo team={game.homeTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.homeTeam.name}</Text></View>
       <View style={styles.liveScoreBlock}><Text style={styles.liveScore}>{game.homeScore ?? 0} : {game.awayScore ?? 0}</Text><Text style={styles.liveMinute}>{liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text><Text style={styles.liveScoreLabel}>AKTUELLER STAND</Text></View>
@@ -625,24 +629,27 @@ function PlayerTipsModal({ player, onClose }: { player: LeaderboardEntry | null;
   </Modal>;
 }
 
-function ProfileScreen({ session, games, onRefresh }: { session: Session | null; games: Game[]; onRefresh: () => void }) {
+function ProfileScreen({ session, games, teams, favoriteTeamId, onFavoriteTeamChanged, onRefresh }: { session: Session | null; games: Game[]; teams: Team[]; favoriteTeamId: string | null; onFavoriteTeamChanged: (teamId: string | null) => void; onRefresh: () => void }) {
   const pushSupported = pushNotificationsSupported();
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [displayName, setDisplayName] = useState(() => String(session?.user.user_metadata?.display_name ?? ''));
   const [nameBusy, setNameBusy] = useState(false);
+  const [favoritePickerOpen, setFavoritePickerOpen] = useState(false);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     if (pushSupported) pushNotificationsEnabled().then(setPushEnabled).catch(() => setPushEnabled(false));
   }, [pushSupported]);
   useEffect(() => {
     if (!session) return;
-    supabase.from('profiles').select('display_name,is_admin').eq('id', session.user.id).single()
+    supabase.from('profiles').select('display_name,is_admin,favorite_team_id').eq('id', session.user.id).single()
       .then(({ data }) => {
         if (data?.display_name) setDisplayName(data.display_name);
         setIsAdmin(data?.is_admin === true);
+        onFavoriteTeamChanged(data?.favorite_team_id ?? null);
       });
-  }, [session]);
+  }, [onFavoriteTeamChanged, session]);
   async function saveDisplayName() {
     if (!session || nameBusy) return;
     const normalizedName = normalizeDisplayName(displayName);
@@ -674,15 +681,36 @@ function ProfileScreen({ session, games, onRefresh }: { session: Session | null;
       setPushBusy(false);
     }
   }
+  async function saveFavoriteTeam(teamId: string | null) {
+    if (!session || favoriteBusy) return;
+    setFavoriteBusy(true);
+    const { error } = await supabase.rpc('update_my_favorite_team', { p_team_id: teamId });
+    if (error) Alert.alert('Lieblingsteam nicht gespeichert', error.message);
+    else {
+      onFavoriteTeamChanged(teamId);
+      setFavoritePickerOpen(false);
+    }
+    setFavoriteBusy(false);
+  }
   async function signOut() {
     if (pushEnabled) await disablePushNotifications().catch(() => undefined);
     await supabase.auth.signOut();
   }
+  const favoriteTeam = teams.find(team => team.id === favoriteTeamId) ?? null;
+  const selectableTeams = teams.filter(team => team.isCompetitor !== false).sort((a, b) => a.name.localeCompare(b.name, 'de'));
   return <>
     <View style={styles.card}><Text style={styles.cardTitle}>Mein Konto</Text><Text style={styles.muted}>{session?.user.email ?? 'Demo-Spieler'}</Text>{session && <><Field label="Anzeigename" value={displayName} onChangeText={setDisplayName} maxLength={30} /><Text style={styles.profileHint}>Der Anzeigename ist eindeutig und erscheint in Rangliste und Tippverlauf.</Text><Button label={nameBusy ? 'Bitte warten …' : 'Anzeigename speichern'} onPress={saveDisplayName} disabled={nameBusy} /></>}<View style={styles.spacer} /><Button label="Daten aktualisieren" onPress={onRefresh} />{session && <Pressable onPress={signOut}><Text style={styles.danger}>Abmelden</Text></Pressable>}</View>
+    {session && <View style={styles.card}>
+      <Text style={styles.cardTitle}>Lieblingsteam</Text><Text style={styles.muted}>Dein Team wird bei Live-Spielen immer zuerst angezeigt. Mit aktivierten Benachrichtigungen erhältst du außerdem Toralarme.</Text>
+      <Pressable disabled={favoriteBusy} onPress={() => setFavoritePickerOpen(open => !open)} style={styles.favoriteSelect}><View style={styles.favoriteSelectTeam}>{favoriteTeam && <TeamLogo team={favoriteTeam} />}<Text style={styles.favoriteSelectText}>{favoriteTeam?.name ?? 'Kein Lieblingsteam ausgewählt'}</Text></View><Text style={styles.favoriteSelectArrow}>{favoritePickerOpen ? '▲' : '▼'}</Text></Pressable>
+      {favoritePickerOpen && <View style={styles.favoriteOptions}><ScrollView nestedScrollEnabled style={styles.favoriteOptionsScroll}>
+        <Pressable onPress={() => saveFavoriteTeam(null)} style={[styles.favoriteOption, !favoriteTeamId && styles.favoriteOptionActive]}><Text style={[styles.favoriteOptionText, !favoriteTeamId && styles.favoriteOptionTextActive]}>Kein Lieblingsteam</Text></Pressable>
+        {selectableTeams.map(team => <Pressable key={team.id} onPress={() => saveFavoriteTeam(team.id)} style={[styles.favoriteOption, favoriteTeamId === team.id && styles.favoriteOptionActive]}><TeamLogo team={team} /><Text style={[styles.favoriteOptionText, favoriteTeamId === team.id && styles.favoriteOptionTextActive]}>{team.name}</Text></Pressable>)}
+      </ScrollView></View>}
+    </View>}
     {Platform.OS === 'web' && <View style={styles.card}>
       <Text style={styles.cardTitle}>Tipp-Erinnerung</Text>
-      <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn – aber nur, wenn dein Tipp für dieses Spiel noch fehlt.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
+      <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn, wenn dein Tipp fehlt. Für dein Lieblingsteam erhältst du zusätzlich Toralarme.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
       {pushSupported && <Button label={pushBusy ? 'Bitte warten …' : pushEnabled ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten'} onPress={togglePush} disabled={pushBusy} />}
     </View>}
     {isAdmin && <AdminPanel games={games} onChanged={onRefresh} />}
@@ -870,6 +898,7 @@ const styles = StyleSheet.create({
   liveMinute: { color: c.ink, fontSize: 11, fontWeight: '900', marginTop: 4, textAlign: 'center' },
   liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
   liveDetailsHint: { color: c.lime, fontSize: 11, fontWeight: '900', letterSpacing: .3, marginTop: 12, textAlign: 'center' },
+  favoriteLiveLabel: { color: c.lime, fontSize: 9, fontWeight: '900', letterSpacing: 1, marginBottom: 3 },
   profileHint: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 7 },
   authFeedback: { marginTop: 13, padding: 11, borderRadius: 9, fontSize: 13, fontWeight: '700', lineHeight: 18 },
   authFeedbackError: { color: '#ffd4d4', backgroundColor: '#421c27' },
@@ -937,4 +966,14 @@ const styles = StyleSheet.create({
   pointsSummary: { alignItems: 'center', backgroundColor: c.panel2, borderLeftColor: c.lime, borderLeftWidth: 4, borderRadius: 10, flexDirection: 'row', gap: 9, marginBottom: 9, paddingHorizontal: 13, paddingVertical: 10 },
   pointsSummaryCount: { color: c.lime, fontSize: 23, fontWeight: '900' },
   pointsSummaryLabel: { color: c.ink, fontSize: 13, fontWeight: '800' },
+  favoriteSelect: { alignItems: 'center', backgroundColor: c.panel2, borderColor: c.line, borderRadius: 11, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 14, padding: 11 },
+  favoriteSelectTeam: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 10, minWidth: 0 },
+  favoriteSelectText: { color: c.ink, flex: 1, fontSize: 14, fontWeight: '800' },
+  favoriteSelectArrow: { color: c.lime, fontSize: 12, fontWeight: '900', marginLeft: 8 },
+  favoriteOptions: { backgroundColor: c.bg, borderColor: c.line, borderRadius: 11, borderWidth: 1, marginTop: 6, maxHeight: 235 },
+  favoriteOptionsScroll: { paddingHorizontal: 6 },
+  favoriteOption: { alignItems: 'center', borderBottomColor: c.line, borderBottomWidth: 1, flexDirection: 'row', gap: 10, padding: 9 },
+  favoriteOptionActive: { backgroundColor: c.lime },
+  favoriteOptionText: { color: c.ink, flex: 1, fontSize: 13, fontWeight: '800' },
+  favoriteOptionTextActive: { color: c.bg },
 });
