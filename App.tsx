@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import Slider from '@react-native-community/slider';
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
@@ -721,7 +722,7 @@ function ProfileScreen({ session, games, teams, favoriteTeamId, onFavoriteTeamCh
       <Text style={styles.muted}>{pushSupported ? 'Erinnert dich etwa eine Stunde vor Spielbeginn, wenn dein Tipp fehlt. Für dein Lieblingsteam erhältst du zusätzlich Toralarme.' : 'Auf iPhone und iPad funktionieren Benachrichtigungen erst, nachdem du die App über Safari zum Home-Bildschirm hinzugefügt hast.'}</Text>
       {pushSupported && <Button label={pushBusy ? 'Bitte warten …' : pushEnabled ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten'} onPress={togglePush} disabled={pushBusy} />}
     </View>}
-    {isAdmin && <AdminPanel games={games} onChanged={onRefresh} />}
+    {isAdmin && <><AdminGoalAlertDelay /><AdminPanel games={games} onChanged={onRefresh} /></>}
     <View style={styles.card}>
       <Text style={styles.cardTitle}>WhatsApp-Gruppe</Text>
       <Text style={styles.muted}>Tritt der WhatsApp-Gruppe zum Oberliga-Tippspiel bei.</Text>
@@ -745,6 +746,42 @@ function ProfileScreen({ session, games, teams, favoriteTeamId, onFavoriteTeamCh
 
 type AdminUser = { user_id: string; display_name: string };
 type AdminPrediction = { game_id: string; predicted_home: number; predicted_away: number; points: number | null };
+
+function AdminGoalAlertDelay() {
+  const [delay, setDelay] = useState(30);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    supabase.rpc('admin_goal_alert_delay_seconds').then(({ data, error }) => {
+      if (error) setMessage(`Einstellung nicht geladen: ${error.message}`);
+      else setDelay(Math.max(0, Math.min(60, Number(data ?? 30))));
+    }).then(() => setLoading(false), () => setLoading(false));
+  }, []);
+  async function save() {
+    if (saving) return;
+    setSaving(true);
+    setMessage('');
+    const { data, error } = await supabase.rpc('admin_update_goal_alert_delay', { p_seconds: delay });
+    if (error) setMessage(`Nicht gespeichert: ${error.message}`);
+    else {
+      setDelay(Number(data ?? delay));
+      setMessage(`✓ Toralarm wird um ${Number(data ?? delay)} Sekunden verzögert.`);
+    }
+    setSaving(false);
+  }
+  return <View style={[styles.card, styles.adminCard]}>
+    <Text style={styles.cardTitle}>Admin: Toralarm-Verzögerung</Text>
+    <Text style={styles.muted}>Diese Einstellung gilt für alle Spieler und verhindert, dass der Toralarm dem Sprade-TV-Stream voraus ist.</Text>
+    {loading ? <ActivityIndicator color={c.lime} style={styles.adminDelayLoading} /> : <>
+      <Text style={styles.adminDelayValue}>{delay} Sekunden</Text>
+      <Slider minimumValue={0} maximumValue={60} step={1} value={delay} onValueChange={setDelay} minimumTrackTintColor={c.lime} maximumTrackTintColor={c.line} thumbTintColor={c.lime} />
+      <View style={styles.adminDelayRange}><Text style={styles.profileHint}>0 Sek.</Text><Text style={styles.profileHint}>60 Sek.</Text></View>
+      <Button label={saving ? 'Speichert …' : 'Verzögerung speichern'} onPress={save} disabled={saving} />
+      {message && <Text style={[styles.tableSaveFeedback, message.startsWith('Nicht') && styles.saveError]}>{message}</Text>}
+    </>}
+  </View>;
+}
 
 function AdminPanel({ games, onChanged }: { games: Game[]; onChanged: () => void }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -923,6 +960,9 @@ const styles = StyleSheet.create({
   liveTableStats: { color: c.muted, width: 40, textAlign: 'center', fontSize: 11, fontWeight: '800' },
   liveTablePoints: { color: c.lime, width: 24, textAlign: 'right', fontSize: 15, fontWeight: '900' },
   adminCard: { borderColor: '#607f2b' },
+  adminDelayLoading: { marginTop: 18 },
+  adminDelayValue: { color: c.lime, fontSize: 24, fontWeight: '900', textAlign: 'center', marginTop: 18, marginBottom: 6 },
+  adminDelayRange: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -3 },
   adminLabel: { color: c.lime, fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginTop: 18, marginBottom: 8 },
   adminUserList: { gap: 8, paddingRight: 10 },
   adminUser: { borderWidth: 1, borderColor: c.line, borderRadius: 18, paddingVertical: 8, paddingHorizontal: 12 },
