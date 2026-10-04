@@ -21,7 +21,7 @@ import { authErrorMessage, registrationErrorMessage, withAuthTimeout } from './s
 import { displayNameValidationError, normalizeDisplayName } from './src/displayNames';
 import { gameTipsCsv } from './src/csv';
 import { arePreseasonGamesVisible, gamesForNextMatchday } from './src/gameFilters';
-import { liveClockLabel } from './src/liveGame';
+import { compareLiveGames, liveClockLabel } from './src/liveGame';
 import { isOfficiallyLive } from './src/liveStatus';
 import { disablePushNotifications, enablePushNotifications, pushNotificationsEnabled, pushNotificationsSupported } from './src/notifications';
 import { configurePwa } from './src/pwa';
@@ -366,7 +366,7 @@ function GamesScreen({ games, setGames, session, favoriteTeamId }: { games: Game
     if (phase === 'preseason' && !preseasonVisible) setPhase('regular');
   }, [phase, preseasonVisible]);
   const isFavoriteGame = (game: Game) => Boolean(favoriteTeamId && (game.homeTeam.id === favoriteTeamId || game.awayTeam.id === favoriteTeamId));
-  const liveGames = games.filter(game => game.isLive).sort((a, b) => Number(isFavoriteGame(b)) - Number(isFavoriteGame(a)) || new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const liveGames = games.filter(game => game.isLive).sort((a, b) => compareLiveGames(a, b, favoriteTeamId));
   const phaseGames = games.filter(game => game.phase === phase);
   const shown = scope === 'next' ? gamesForNextMatchday(phaseGames) : phaseGames;
   const shownTips = shown.filter(game => !game.isLive);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { liveClockLabel } from './liveGame';
+import { compareLiveGames, liveClockLabel } from './liveGame';
 
 describe('liveClockLabel', () => {
   it('converts HockeyData elapsed seconds to the current game minute', () => {
@@ -15,5 +15,23 @@ describe('liveClockLabel', () => {
 
   it('falls back when HockeyData has no clock value', () => {
     expect(liveClockLabel(null, null)).toBe('Spiel läuft');
+  });
+
+  it('keeps favorite and selected local teams in a predictable live-game order', () => {
+    const game = (home: string, away: string, startsAt = '2026-10-04T16:00:00.000Z') => ({
+      startsAt,
+      homeTeam: { id: home, name: home },
+      awayTeam: { id: away, name: away },
+    });
+    const games = [
+      game('Selber Wölfe', 'Deggendorfer SC'),
+      game('SC Riessersee', 'Erding Gladiators'),
+      game('EC Peiting', 'Höchstadt Alligators'),
+      game('ESV Kaufbeuren', 'EV Füssen'),
+      game('Tölzer Löwen', 'EV Lindau Islanders'),
+    ];
+
+    expect([...games].sort((a, b) => compareLiveGames(a, b, 'SC Riessersee')).map(item => item.homeTeam.name))
+      .toEqual(['SC Riessersee', 'ESV Kaufbeuren', 'EC Peiting', 'Tölzer Löwen', 'Selber Wölfe']);
   });
 });

@@ -1,5 +1,5 @@
-const CACHE='oberliga-dc471027d429';
-const ASSETS=["/_expo/static/js/web/AppEntry-90d342afb267a03a4dc63104c62d0e1f.js","/_headers","/datenschutz.html","/favicon.ico","/icons/icon-192.png","/icons/icon-512.png","/impressum.html","/index.html","/manifest.json","/metadata.json","/quickstart.html"];
+const CACHE='oberliga-e547162692d0';
+const ASSETS=["/_expo/static/js/web/AppEntry-718ee68a0d6b2d29c57072862c0deaf3.js","/_headers","/datenschutz.html","/favicon.ico","/icons/icon-192.png","/icons/icon-512.png","/impressum.html","/index.html","/manifest.json","/metadata.json","/quickstart.html"];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',event=>{
