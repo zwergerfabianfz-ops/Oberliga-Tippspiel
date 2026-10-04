@@ -37,13 +37,15 @@ Deno.serve(async req => {
   const changes = liveGames.flatMap(game => {
     const previous = stateByGame.get(game.id);
     if (!previous) return [];
-    const result: { userTeamId: string; title: string; body: string }[] = [];
+    // Alle Fans eines beteiligten Teams werden benachrichtigt. Damit kommt
+    // sowohl ein Tor des Lieblingsteams als auch ein Gegentor als Toralarm an.
+    const result: { involvedTeamIds: string[]; title: string; body: string }[] = [];
     const homeGoals = game.home_score - previous.home_score;
     const awayGoals = game.away_score - previous.away_score;
     const home = teamName.get(game.home_team_id) ?? 'Heimteam';
     const away = teamName.get(game.away_team_id) ?? 'Gastteam';
-    if (homeGoals > 0) result.push({ userTeamId: game.home_team_id, title: `Tor für ${home}! 🏒`, body: `${home} – ${away} ${game.home_score}:${game.away_score}` });
-    if (awayGoals > 0) result.push({ userTeamId: game.away_team_id, title: `Tor für ${away}! 🏒`, body: `${home} – ${away} ${game.home_score}:${game.away_score}` });
+    if (homeGoals > 0) result.push({ involvedTeamIds: [game.home_team_id, game.away_team_id], title: `Tor für ${home}! 🏒`, body: `${home} – ${away} ${game.home_score}:${game.away_score}` });
+    if (awayGoals > 0) result.push({ involvedTeamIds: [game.home_team_id, game.away_team_id], title: `Tor für ${away}! 🏒`, body: `${home} – ${away} ${game.home_score}:${game.away_score}` });
     return result;
   });
 
@@ -52,7 +54,7 @@ Deno.serve(async req => {
   if (snapshotError) return response({ error: snapshotError.message }, 500);
   if (!changes.length) return response({ sent: 0, reason: 'baseline-or-no-new-goals' });
 
-  const favoriteTeamIds = [...new Set(changes.map(change => change.userTeamId))];
+  const favoriteTeamIds = [...new Set(changes.flatMap(change => change.involvedTeamIds))];
   const { data: fans, error: fansError } = await supabase.from('profiles').select('id,favorite_team_id').in('favorite_team_id', favoriteTeamIds);
   if (fansError) return response({ error: fansError.message }, 500);
   const fanTeamByUser = new Map((fans ?? []).map(fan => [fan.id, fan.favorite_team_id]));
@@ -62,15 +64,16 @@ Deno.serve(async req => {
 
   let sent = 0;
   for (const row of subscriptions ?? []) {
-    const change = changes.find(item => item.userTeamId === fanTeamByUser.get(row.user_id));
-    if (!change) continue;
-    try {
-      await webpush.sendNotification((row as Subscription).subscription, JSON.stringify({ title: change.title, body: change.body, url: '/' }), { TTL: 3600 });
-      sent += 1;
-    } catch (error) {
-      const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 0;
-      if (statusCode === 404 || statusCode === 410) await supabase.from('push_subscriptions').delete().eq('endpoint', row.endpoint);
-      else console.error('Goal alert failed', error);
+    const relevantChanges = changes.filter(item => item.involvedTeamIds.includes(fanTeamByUser.get(row.user_id) ?? ''));
+    for (const change of relevantChanges) {
+      try {
+        await webpush.sendNotification((row as Subscription).subscription, JSON.stringify({ title: change.title, body: change.body, url: '/' }), { TTL: 3600 });
+        sent += 1;
+      } catch (error) {
+        const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 0;
+        if (statusCode === 404 || statusCode === 410) await supabase.from('push_subscriptions').delete().eq('endpoint', row.endpoint);
+        else console.error('Goal alert failed', error);
+      }
     }
   }
   return response({ sent, changes: changes.length });
