@@ -405,7 +405,7 @@ function LiveGameCard({ game, isFavorite, onPress }: { game: Game; isFavorite: b
     <View style={styles.cardTop}><View>{isFavorite && <Text style={styles.favoriteLiveLabel}>DEIN LIEBLINGSTEAM</Text>}<Text style={styles.date}>{date} Uhr</Text></View><Text style={[styles.state, styles.live]}>LIVE</Text></View>
     <View style={[styles.historyMatch, styles.liveMatch]}>
       <View style={styles.historyTeam}><TeamLogo team={game.homeTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.homeTeam.name}</Text></View>
-      <View style={styles.liveScoreBlock}><Text style={styles.liveScore}>{game.homeScore ?? 0} : {game.awayScore ?? 0}</Text><Text style={styles.liveMinute}>{liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text><Text style={styles.liveScoreLabel}>AKTUELLER STAND</Text></View>
+      <View style={styles.liveScoreBlock}><Text style={styles.liveScore}>{game.homeScore ?? 0} : {game.awayScore ?? 0}</Text><Text style={styles.liveMinute}>{liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text><Text style={styles.liveScoreLabel}>AKTUELLER STAND</Text><Text style={styles.liveOwnTip}>Mein Tipp: {game.predictedHome ?? '–'} : {game.predictedAway ?? '–'}</Text></View>
       <View style={styles.historyTeam}><TeamLogo team={game.awayTeam} /><Text numberOfLines={2} style={styles.historyTeamName}>{game.awayTeam.name}</Text></View>
     </View>
     <Text style={styles.liveDetailsHint}>Spielbericht anzeigen ›</Text>
@@ -906,6 +906,7 @@ const styles = StyleSheet.create({
   liveScore: { color: '#ff5a52', fontSize: 25, fontWeight: '900', textAlign: 'center' },
   liveMinute: { color: c.ink, fontSize: 11, fontWeight: '900', marginTop: 4, textAlign: 'center' },
   liveScoreLabel: { color: c.muted, fontSize: 8, fontWeight: '900', letterSpacing: .8, marginTop: 4, textAlign: 'center' },
+  liveOwnTip: { color: c.ink, fontSize: 10, fontWeight: '800', marginTop: 9, textAlign: 'center' },
   liveDetailsHint: { color: c.lime, fontSize: 11, fontWeight: '900', letterSpacing: .3, marginTop: 12, textAlign: 'center' },
   favoriteLiveLabel: { color: c.lime, fontSize: 9, fontWeight: '900', letterSpacing: 1, marginBottom: 3 },
   profileHint: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 7 },
