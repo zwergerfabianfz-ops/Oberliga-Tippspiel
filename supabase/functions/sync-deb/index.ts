@@ -205,8 +205,30 @@ Deno.serve(async req => {
   games.push(...preseasonGames);
   const { error: gameError } = await supabase.from('games').upsert(games, { onConflict: 'season_id,external_id' });
   if (gameError) return json({ error: gameError.message }, 500);
-  return json({ importedGames: games.length, importedPreseasonGames: preseasonGames.length, importedTeams: teams.length, importedStandings: standingRows.length, liveGames: games.filter(game => game.is_live).length });
+  // Der Toralarm wird unmittelbar nach einem erfolgreichen Datenabgleich geprüft.
+  // So wartet ein neues Tor nicht auf den nächsten, getrennten Minuten-Job.
+  const goalAlertStatus = await triggerGoalAlerts();
+  return json({ importedGames: games.length, importedPreseasonGames: preseasonGames.length, importedTeams: teams.length, importedStandings: standingRows.length, liveGames: games.filter(game => game.is_live).length, goalAlertStatus });
 });
+
+async function triggerGoalAlerts(): Promise<number | null> {
+  const secret = Deno.env.get('REMINDER_SECRET');
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  if (!secret || !supabaseUrl) return null;
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/send-goal-alerts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-reminder-secret': secret },
+      body: '{}',
+    });
+    if (!response.ok) console.error('Goal alert trigger failed', response.status, await response.text());
+    return response.status;
+  } catch (error) {
+    // Ein Push-Problem darf nie verhindern, dass Spielstände importiert werden.
+    console.error('Goal alert trigger failed', error);
+    return null;
+  }
+}
 
 async function fetchSchedule(apiKey: string, divisionId: string): Promise<HockeyDataRow[]> {
   const endpoint = new URL('https://api.hockeydata.net/data/ebel/Schedule');
