@@ -347,7 +347,7 @@ function MainApp({ session }: { session: Session | null }) {
     <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} refreshControl={undefined}>
       {refreshing ? <ActivityIndicator color="#b8f341" /> : null}
       {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} favoriteTeamId={favoriteTeamId} />}
-      {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} />}
+      {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} games={games} />}
       {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} liveStandings={liveStandings} session={session} onSaved={setTeams} />}
       {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
       {tab === 'profil' && <ProfileScreen session={session} games={games} teams={teams} favoriteTeamId={favoriteTeamId} onFavoriteTeamChanged={setFavoriteTeamId} onRefresh={load} />}
@@ -429,14 +429,15 @@ function LiveGameDetailsModal({ game, onClose }: { game: Game | null; onClose: (
   useEffect(() => {
     if (!game) { setEvents([]); setError(null); return; }
     load();
+    if (!game.isLive) return;
     const timer = setInterval(load, 15_000);
     return () => clearInterval(timer);
   }, [game, load]);
   if (!game) return null;
   return <Modal transparent animationType="slide" visible onRequestClose={onClose}>
     <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
-      <View style={styles.modalHeader}><View><Text style={styles.brand}>LIVE-SPIELBERICHT</Text><Text style={styles.modalTitle}>{game.homeTeam.shortName} – {game.awayTeam.shortName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
-      <Text style={styles.modalSubtitle}>{game.homeScore ?? 0} : {game.awayScore ?? 0} · {liveClockLabel(game.liveElapsedSeconds, game.livePhase)}</Text>
+      <View style={styles.modalHeader}><View><Text style={styles.brand}>{game.isLive ? 'LIVE-SPIELBERICHT' : 'SPIELBERICHT'}</Text><Text style={styles.modalTitle}>{game.homeTeam.shortName} – {game.awayTeam.shortName}</Text></View><Pressable onPress={onClose} style={styles.modalClose}><Text style={styles.modalCloseText}>×</Text></Pressable></View>
+      <Text style={styles.modalSubtitle}>{game.homeScore ?? 0} : {game.awayScore ?? 0}{game.isLive ? ` · ${liveClockLabel(game.liveElapsedSeconds, game.livePhase)}` : ' · Endstand'}</Text>
       {loading && !events.length ? <ActivityIndicator color={c.lime} style={styles.modalLoading} /> : error ? <Text style={styles.modalError}>{error}</Text> : <ScrollView contentContainerStyle={styles.liveEvents}>
         {!events.length ? <Text style={styles.muted}>Noch keine Tore oder Strafen erfasst.</Text> : <>
           <View style={styles.eventTeamsHeader}><View style={[styles.eventTeamHeading, styles.eventTeamHeadingHome]}><Text numberOfLines={1} style={styles.eventTeamName}>{game.homeTeam.name}</Text><TeamLogo team={game.homeTeam} /></View><Text style={styles.eventMinuteHeading}>MIN.</Text><View style={[styles.eventTeamHeading, styles.eventTeamHeadingAway]}><TeamLogo team={game.awayTeam} /><Text numberOfLines={1} style={styles.eventTeamName}>{game.awayTeam.name}</Text></View></View>
@@ -500,8 +501,10 @@ function GameCard({ game, onSave }: { game: Game; onSave: (g: Game, h: string, a
   </View>;
 }
 
-function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] }) {
+function TipsHistoryScreen({ predictions, games: allGames }: { predictions: RecentPrediction[]; games: Game[] }) {
   const [openGameId, setOpenGameId] = useState<string | null>(null);
+  const [reportGame, setReportGame] = useState<Game | null>(null);
+  const gamesById = new Map(allGames.map(game => [game.id, game]));
   const games = new Map<string, { game: RecentPrediction; tips: RecentPrediction[] }>();
   for (const prediction of predictions) {
     const entry = games.get(prediction.gameId) ?? { game: prediction, tips: [] };
@@ -513,6 +516,7 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
     {[...games.values()].map(({ game, tips }) => {
       const date = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }).format(new Date(game.startsAt));
       const tipsOpen = openGameId === game.gameId;
+      const finalGame = game.isFinal ? gamesById.get(game.gameId) : null;
       return <View key={game.gameId} style={styles.card}>
         <View style={styles.cardTop}><Text style={styles.date}>{date} Uhr</Text><Text style={[styles.state, styles.closed, game.isLive && styles.live]}>{game.isLive ? 'LIVE' : game.isFinal ? 'BEENDET' : 'GESTARTET'}</Text></View>
         <View style={styles.historyMatch}>
@@ -531,9 +535,13 @@ function TipsHistoryScreen({ predictions }: { predictions: RecentPrediction[] })
             <View style={styles.tipPointsColumn}><Text style={styles.tipPoints}>{game.isFinal && tip.points !== null ? `${tip.points} P` : '–'}</Text></View>
           </View>)}
         </View>}
+        {finalGame && <Pressable style={styles.historyReportToggle} onPress={() => setReportGame(finalGame)} accessibilityRole="button">
+          <Text style={styles.historyToggleText}>Spielbericht anzeigen</Text><Text style={styles.historyToggleArrow}>›</Text>
+        </Pressable>}
       </View>;
     })}
     {!games.size && <Empty text="In den letzten 14 Tagen gibt es noch keine sichtbaren Tipps." />}
+    <LiveGameDetailsModal game={reportGame} onClose={() => setReportGame(null)} />
   </>;
 }
 
@@ -887,6 +895,7 @@ const styles = StyleSheet.create({
   tipValueColumn: { width: '32%', alignItems: 'center' },
   tipPointsColumn: { width: '34%', alignItems: 'flex-end' },
   historyToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderTopWidth: 1, borderTopColor: c.line, paddingVertical: 11, marginTop: 2 },
+  historyReportToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderTopWidth: 1, borderTopColor: c.line, paddingTop: 11, paddingBottom: 2 },
   historyToggleText: { color: c.lime, fontSize: 12, fontWeight: '800' },
   historyToggleArrow: { color: c.lime, fontSize: 11, fontWeight: '900' },
   liveSection: { marginBottom: 6 },
