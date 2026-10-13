@@ -32,6 +32,7 @@ import type { Game, LeaderboardEntry, LiveStanding, PlayerFinalTip, RecentPredic
 
 type Tab = 'spiele' | 'verlauf' | 'tabelle' | 'rangliste' | 'profil';
 type AuthNotice = { kind: 'success' | 'error'; message: string };
+type NextMatchdayTipStatus = { user_id: string; is_complete: boolean; tipped_games: number; total_games: number };
 
 const demoSeason: Season = { id: 'demo', name: 'Oberliga Süd 2026/27', tablePredictionDeadline: '2026-09-17T21:59:59.000Z', status: 'upcoming' };
 
@@ -249,6 +250,7 @@ function MainApp({ session }: { session: Session | null }) {
   const [liveStandings, setLiveStandings] = useState<LiveStanding[]>([]);
   const [gameRanking, setGameRanking] = useState<LeaderboardEntry[]>([]);
   const [tableRanking, setTableRanking] = useState<LeaderboardEntry[]>([]);
+  const [nextMatchdayTipStatus, setNextMatchdayTipStatus] = useState<Map<string, NextMatchdayTipStatus>>(new Map());
   const [recentPredictions, setRecentPredictions] = useState<RecentPrediction[]>([]);
   const [favoriteTeamId, setFavoriteTeamId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -258,19 +260,21 @@ function MainApp({ session }: { session: Session | null }) {
   const load = useCallback(async (showSpinner = true) => {
     if (!session) return;
     if (showSpinner) setRefreshing(true);
-    const [{ data: seasonRows }, { data: gameRows }, { data: gameExternalIds }, { data: profile }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }] = await Promise.all([
+    const [{ data: seasonRows }, { data: gameRows }, { data: gameExternalIds }, { data: profile }, { data: gameRanks }, { data: tableRanks }, { data: recentRows }, { data: tipStatuses }] = await Promise.all([
       supabase.from('seasons').select('*').order('created_at', { ascending: false }).limit(1),
       supabase.from('games_with_my_predictions').select('*').order('starts_at'),
       supabase.from('games').select('id,external_id'),
       supabase.from('profiles').select('favorite_team_id').eq('id', session.user.id).maybeSingle(),
       supabase.rpc('game_leaderboard'), supabase.rpc('table_leaderboard'),
       supabase.rpc('recent_game_predictions'),
+      supabase.rpc('next_matchday_tip_status'),
     ]);
     const current = seasonRows?.[0];
     if (current) setSeason({ id: current.id, name: current.name, tablePredictionDeadline: current.table_prediction_deadline, status: current.status });
     if (gameRanks) setGameRanking(gameRanks.map(mapRank));
     if (tableRanks) setTableRanking(tableRanks.map(mapRank));
     if (recentRows) setRecentPredictions(recentRows.map(mapRecentPrediction));
+    if (tipStatuses) setNextMatchdayTipStatus(new Map((tipStatuses as NextMatchdayTipStatus[]).map(status => [status.user_id, status])));
     setFavoriteTeamId(profile?.favorite_team_id ?? null);
     const [{ data: teamRows }, { data: standingRows }] = current ? await Promise.all([
       supabase.from('teams').select('*').eq('season_id', current.id).order('name'),
@@ -350,7 +354,7 @@ function MainApp({ session }: { session: Session | null }) {
       {tab === 'spiele' && <GamesScreen games={games} setGames={setGames} session={session} favoriteTeamId={favoriteTeamId} />}
       {tab === 'verlauf' && <TipsHistoryScreen predictions={recentPredictions} games={games} />}
       {tab === 'tabelle' && <TableTipScreen season={season} teams={teams} liveStandings={liveStandings} session={session} onSaved={setTeams} />}
-      {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} />}
+      {tab === 'rangliste' && <RankingScreen games={gameRanking} table={tableRanking} season={season} nextMatchdayTipStatus={nextMatchdayTipStatus} />}
       {tab === 'profil' && <ProfileScreen session={session} games={games} teams={teams} favoriteTeamId={favoriteTeamId} onFavoriteTeamChanged={setFavoriteTeamId} onRefresh={load} />}
     </ScrollView>
     <View style={styles.nav}>{(['spiele', 'verlauf', 'tabelle', 'rangliste', 'profil'] as Tab[]).map(item => <Pressable key={item} style={styles.navItem} onPress={() => setTab(item)}><Text style={[styles.navIcon, tab === item && styles.active]}>{({ spiele: '◫', verlauf: '◷', tabelle: '≡', rangliste: '♛', profil: '●' } as const)[item]}</Text><Text style={[styles.navLabel, tab === item && styles.active]}>{item[0]!.toUpperCase() + item.slice(1)}</Text></Pressable>)}</View>
@@ -595,12 +599,17 @@ function TableTipScreen({ season, teams, liveStandings, session, onSaved }: { se
   </>;
 }
 
-function RankingScreen({ games, table, season }: { games: LeaderboardEntry[]; table: LeaderboardEntry[]; season: Season }) {
+function RankingScreen({ games, table, season, nextMatchdayTipStatus }: { games: LeaderboardEntry[]; table: LeaderboardEntry[]; season: Season; nextMatchdayTipStatus: Map<string, NextMatchdayTipStatus> }) {
   const [type, setType] = useState<'games' | 'table'>('games');
   const [selectedPlayer, setSelectedPlayer] = useState<LeaderboardEntry | null>(null);
   const entries = type === 'games' ? games : table;
-  return <><Segment options={[['games', 'Spielt Tipps'], ['table', 'Tabellentipps']]} value={type} onChange={setType} /><Text style={styles.sectionHint}>{type === 'games' ? '3 Punkte exakt · 2 Tordifferenz · 1 Sieger' : season.status === 'finished' ? 'Auswertung der Abschlusspositionen' : 'Wird nach Ende der Hauptrunde veröffentlicht.'}</Text>
-    {entries.map(entry => <Pressable key={`${entry.rank}-${entry.displayName}`} disabled={type !== 'games' || !entry.userId} onPress={() => setSelectedPlayer(entry)} style={styles.rankingRow}><Text style={[styles.rankNo, entry.rank <= 3 && styles.active]}>{entry.rank}</Text><Text style={styles.rankingName}>{entry.displayName}</Text>{entry.exactTips !== undefined && <Text style={styles.exacts}>{entry.exactTips} exakt</Text>}<Text style={styles.points}>{entry.points} P</Text></Pressable>)}
+  const showNextMatchdayStatus = type === 'games' && nextMatchdayTipStatus.size > 0;
+  return <><Segment options={[['games', 'Spielt Tipps'], ['table', 'Tabellentipps']]} value={type} onChange={setType} /><Text style={styles.sectionHint}>{type === 'games' ? `3 Punkte exakt · 2 Tordifferenz · 1 Sieger${showNextMatchdayStatus ? ' · Grüner Balken: nächster Spieltag vollständig getippt.' : ''}` : season.status === 'finished' ? 'Auswertung der Abschlusspositionen' : 'Wird nach Ende der Hauptrunde veröffentlicht.'}</Text>
+    {entries.map(entry => {
+      const tipStatus = entry.userId ? nextMatchdayTipStatus.get(entry.userId) : undefined;
+      const tipsComplete = tipStatus?.is_complete === true;
+      return <Pressable key={`${entry.rank}-${entry.displayName}`} disabled={type !== 'games' || !entry.userId} onPress={() => setSelectedPlayer(entry)} accessibilityLabel={showNextMatchdayStatus ? `${entry.displayName}: ${tipsComplete ? 'nächster Spieltag vollständig getippt' : 'mindestens ein Tipp für den nächsten Spieltag fehlt'}` : undefined} style={styles.rankingRow}><Text style={[styles.rankNo, entry.rank <= 3 && styles.active]}>{entry.rank}</Text><Text style={styles.rankingName}>{entry.displayName}</Text>{entry.exactTips !== undefined && <Text style={styles.exacts}>{entry.exactTips} exakt</Text>}<Text style={styles.points}>{entry.points} P</Text>{showNextMatchdayStatus && <View style={[styles.nextMatchdayTipBar, tipsComplete ? styles.nextMatchdayTipComplete : styles.nextMatchdayTipMissing]} />}</Pressable>;
+    })}
     {!entries.length && <Empty text="Die Auswertung erscheint nach Ende der Hauptrunde." />}
     <PlayerTipsModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />
   </>;
@@ -959,6 +968,9 @@ const styles = StyleSheet.create({
   liveTableTeam: { color: c.ink, flex: 1, minWidth: 0, fontSize: 12, fontWeight: '800' },
   liveTableStats: { color: c.muted, width: 40, textAlign: 'center', fontSize: 11, fontWeight: '800' },
   liveTablePoints: { color: c.lime, width: 24, textAlign: 'right', fontSize: 15, fontWeight: '900' },
+  nextMatchdayTipBar: { width: 5, alignSelf: 'stretch', borderRadius: 3, marginLeft: 10 },
+  nextMatchdayTipComplete: { backgroundColor: c.lime },
+  nextMatchdayTipMissing: { backgroundColor: c.red },
   adminCard: { borderColor: '#607f2b' },
   adminDelayLoading: { marginTop: 18 },
   adminDelayValue: { color: c.lime, fontSize: 24, fontWeight: '900', textAlign: 'center', marginTop: 18, marginBottom: 6 },
